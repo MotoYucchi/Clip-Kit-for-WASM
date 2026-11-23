@@ -17,6 +17,7 @@ import type {
   AspectMode,
   AspectPreset,
   AudioCodec,
+  AudioDenoiseLevel,
   AudioExtractFormat,
   CompressionPreset,
   FpsPreset,
@@ -29,7 +30,9 @@ import type {
   SpeedScope,
   UseCasePresetId,
   VideoCodec,
+  VideoDenoiseLevel,
 } from '../../types/edit';
+import { EffectsPanel } from './EffectsPanel';
 import { MultiTrackAudioPanel } from './MultiTrackAudioPanel';
 
 const TABS: { id: ControlTab; labelKey: TranslationKey; videoOnly?: boolean }[] = [
@@ -38,6 +41,7 @@ const TABS: { id: ControlTab; labelKey: TranslationKey; videoOnly?: boolean }[] 
   { id: 'resize', labelKey: 'tab.resize', videoOnly: true },
   { id: 'speed', labelKey: 'tab.speed' },
   { id: 'transform', labelKey: 'tab.transform', videoOnly: true },
+  { id: 'effects', labelKey: 'tab.effects', videoOnly: true },
   { id: 'audio', labelKey: 'tab.audio' },
   { id: 'multitrack', labelKey: 'tab.multitrack', videoOnly: true },
   { id: 'compat', labelKey: 'tab.compat', videoOnly: true },
@@ -233,6 +237,7 @@ export function SettingsPanels() {
                     <select
                       id="sel-vcodec"
                       className="select-control"
+                      disabled={Boolean(containerSpec.isAnimatedImage)}
                       value={config.videoCodec}
                       onChange={(e) => updateConfig({ videoCodec: e.target.value as VideoCodec })}
                     >
@@ -258,6 +263,96 @@ export function SettingsPanels() {
                     </select>
                   </div>
                 </div>
+
+                {/* Animated GIF / WebP Controls */}
+                {containerSpec.isAnimatedImage && (
+                  <div
+                    className="field-group"
+                    style={{
+                      background: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-default)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: 12,
+                    }}
+                  >
+                    <span className="field-label">{t('anim.heading')}</span>
+                    <div className="field-row">
+                      <div className="field-group">
+                        <label className="field-label" htmlFor="anim-fps">
+                          {t('anim.fps')}
+                        </label>
+                        <input
+                          id="anim-fps"
+                          type="number"
+                          min={5}
+                          max={24}
+                          step={1}
+                          className="input-control mono"
+                          value={config.animatedFps}
+                          onChange={(e) =>
+                            updateConfig({ animatedFps: Math.max(5, Math.min(24, Number(e.target.value) || 12)) })
+                          }
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label className="field-label" htmlFor="anim-width">
+                          {t('anim.maxWidth')}
+                        </label>
+                        <input
+                          id="anim-width"
+                          type="number"
+                          min={0}
+                          max={1280}
+                          step={40}
+                          className="input-control mono"
+                          value={config.animatedWidth}
+                          onChange={(e) =>
+                            updateConfig({ animatedWidth: Math.max(0, Number(e.target.value) || 0) })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="field-row">
+                      <div className="field-group">
+                        <label className="field-label" htmlFor="anim-loop">
+                          {t('anim.loop')}
+                        </label>
+                        <input
+                          id="anim-loop"
+                          type="number"
+                          min={0}
+                          max={100}
+                          className="input-control mono"
+                          value={config.animatedLoop}
+                          onChange={(e) =>
+                            updateConfig({ animatedLoop: Math.max(0, Number(e.target.value) || 0) })
+                          }
+                        />
+                      </div>
+                      {config.container === 'webp' && (
+                        <div className="field-group">
+                          <label className="field-label" htmlFor="anim-webpq">
+                            {t('anim.webpQuality')}
+                          </label>
+                          <input
+                            id="anim-webpq"
+                            type="number"
+                            min={30}
+                            max={95}
+                            className="input-control mono"
+                            value={config.webpQuality}
+                            onChange={(e) =>
+                              updateConfig({
+                                webpQuality: Math.max(30, Math.min(95, Number(e.target.value) || 75)),
+                              })
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <p className="field-hint">{t('anim.hint')}</p>
+                  </div>
+                )}
 
                 {capH265.status !== 'supported' && capH265.reasonKey && (
                   <p className="field-hint">
@@ -1305,12 +1400,17 @@ export function SettingsPanels() {
         )}
 
         {/* ================================================================
+            TAB 5.5: EFFECTS, TEXT TELOP, WATERMARK, TRANSITIONS & SUBTITLES
+           ================================================================ */}
+        {safeTab === 'effects' && <EffectsPanel />}
+
+        {/* ================================================================
             TAB 7: MULTI-TRACK AUDIO (BGM / MIC RECORDING / MIX / LOUDNORM)
            ================================================================ */}
         {safeTab === 'multitrack' && <MultiTrackAudioPanel />}
 
         {/* ================================================================
-            TAB 8: FRAME RATE, VFR->CFR & HDR->SDR COMPATIBILITY
+            TAB 8: FRAME RATE, VFR->CFR, HDR->SDR, DEINTERLACE & DENOISE
            ================================================================ */}
         {safeTab === 'compat' && (
           <>
@@ -1373,6 +1473,57 @@ export function SettingsPanels() {
                 <span>{t('compat.hdrToSdr')}</span>
               </label>
               <p className="field-hint">{t('compat.hdrToSdrHint')}</p>
+            </div>
+
+            <div className="field-group">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.deinterlace}
+                  onChange={(e) => updateConfig({ deinterlace: e.target.checked })}
+                />
+                <span>{t('compat.deinterlace')}</span>
+              </label>
+              <p className="field-hint">{t('compat.deinterlaceHint')}</p>
+            </div>
+
+            <div className="field-row">
+              <div className="field-group">
+                <label className="field-label" htmlFor="sel-vdenoise">
+                  {t('compat.videoDenoise')}
+                </label>
+                <select
+                  id="sel-vdenoise"
+                  className="select-control"
+                  value={config.videoDenoise}
+                  onChange={(e) =>
+                    updateConfig({ videoDenoise: e.target.value as VideoDenoiseLevel })
+                  }
+                >
+                  <option value="none">{t('compat.denoiseNone')}</option>
+                  <option value="light">{t('compat.denoiseLight')}</option>
+                  <option value="medium">{t('compat.denoiseMedium')}</option>
+                  <option value="strong">{t('compat.denoiseStrong')}</option>
+                </select>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="sel-adenoise">
+                  {t('compat.audioDenoise')}
+                </label>
+                <select
+                  id="sel-adenoise"
+                  className="select-control"
+                  value={config.audioDenoise}
+                  onChange={(e) =>
+                    updateConfig({ audioDenoise: e.target.value as AudioDenoiseLevel })
+                  }
+                >
+                  <option value="none">{t('compat.denoiseNone')}</option>
+                  <option value="light">{t('compat.denoiseLight')}</option>
+                  <option value="strong">{t('compat.denoiseStrong')}</option>
+                </select>
+              </div>
             </div>
           </>
         )}

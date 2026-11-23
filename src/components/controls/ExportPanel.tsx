@@ -15,7 +15,17 @@ interface ExportPanelProps {
 
 export function ExportPanel({ onExecute }: ExportPanelProps) {
   const { lang, device, showToast } = useUiStore();
-  const { source, sources, clips, selectedClipId, audioTracks, config } = useProjectStore();
+  const {
+    source,
+    sources,
+    clips,
+    selectedClipId,
+    audioTracks,
+    watermarkFile,
+    subtitleFile,
+    subtitleFontFile,
+    config,
+  } = useProjectStore();
   const { wasmStatus, latestResult, errorMessage } = useJobStore();
   const { setPreviewMode } = usePlaybackStore();
   const [showCommand, setShowCommand] = useState(false);
@@ -30,6 +40,10 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
 
   const commandPlan = useMemo(() => {
     if (!source || clips.length === 0) return null;
+    const telopPreviewFile =
+      config.textOverlay.enabled && config.textOverlay.text.trim()
+        ? new File([], 'telop_overlay.png', { type: 'image/png' })
+        : null;
     return buildFullFFmpegCommand({
       primarySource: source,
       sources,
@@ -37,8 +51,22 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
       selectedClipId,
       audioTracks,
       config,
+      watermarkFile,
+      telopPngFile: telopPreviewFile,
+      subtitleFile,
+      subtitleFontFile,
     });
-  }, [source, sources, clips, selectedClipId, audioTracks, config]);
+  }, [
+    source,
+    sources,
+    clips,
+    selectedClipId,
+    audioTracks,
+    watermarkFile,
+    subtitleFile,
+    subtitleFontFile,
+    config,
+  ]);
 
   if (!source || clips.length === 0 || !estimate || !commandPlan) return null;
 

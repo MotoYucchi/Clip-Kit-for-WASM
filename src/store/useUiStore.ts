@@ -11,6 +11,7 @@ export type ControlTab =
   | 'resize'
   | 'speed'
   | 'transform'
+  | 'effects'
   | 'audio'
   | 'multitrack'
   | 'compat'
@@ -37,6 +38,7 @@ interface UiState {
   activeTab: ControlTab;
   mobileSheetOpen: boolean;
   shortcutsOpen: boolean;
+  batchModalOpen: boolean;
   toastMessage: string | null;
 
   setLang: (lang: Language) => void;
@@ -45,6 +47,7 @@ interface UiState {
   setActiveTab: (tab: ControlTab) => void;
   setMobileSheetOpen: (open: boolean) => void;
   setShortcutsOpen: (open: boolean) => void;
+  setBatchModalOpen: (open: boolean) => void;
   showToast: (message: string) => void;
   refreshDevice: () => void;
 }
@@ -65,6 +68,7 @@ export const useUiStore = create<UiState>((set) => ({
   activeTab: 'output',
   mobileSheetOpen: false,
   shortcutsOpen: false,
+  batchModalOpen: false,
   toastMessage: null,
 
   setLang: (lang) => {
@@ -88,6 +92,7 @@ export const useUiStore = create<UiState>((set) => ({
   setActiveTab: (activeTab) => set({ activeTab }),
   setMobileSheetOpen: (mobileSheetOpen) => set({ mobileSheetOpen }),
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
+  setBatchModalOpen: (batchModalOpen) => set({ batchModalOpen }),
 
   showToast: (toastMessage) => {
     if (typeof window !== 'undefined' && toastTimer !== null) {

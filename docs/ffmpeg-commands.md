@@ -129,3 +129,54 @@ ffmpeg -i iphone_hdr.mov \
   -vsync cfr -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
   -c:a aac -b:a 128k -movflags +faststart -y output.mp4
 ```
+
+---
+
+## Phase 3 追加コマンド一覧
+
+## 15. 色補正・映像フェード・インターレース解除・ノイズ除去
+```bash
+ffmpeg -i old_video.avi \
+  -map 0:v:0 -map 0:a:0? \
+  -vf "yadif=mode=0:parity=-1:deint=0,hqdn3d=3:3:6:6,eq=brightness=0.08:contrast=1.15:saturation=1.20,fade=t=in:st=0:d=1.00,fade=t=out:st=58.00:d=2.00" \
+  -af "afftdn=nf=-25" \
+  -c:v libx264 -crf 23 -c:a aac -b:a 128k -y output.mp4
+```
+
+## 16. ウォーターマーク画像 & テキストテロップ PNG 合成
+```bash
+ffmpeg -i input.mp4 -i logo.png -i telop_overlay.png \
+  -filter_complex "[1:v]scale=240:-1:flags=lanczos,format=rgba,colorchannelmixer=aa=0.80[wm_img];[0:v][wm_img]overlay=W-w-20:H-h-20[v_wm];[v_wm][2:v]overlay=0:0:enable='between(t,2.00,8.00)'[v_txt]" \
+  -map "[v_txt]" -map 0:a:0? -c:v libx264 -crf 23 -c:a aac -y output.mp4
+```
+
+## 17. 字幕（SRT / ASS 焼き込み & 字幕トラック埋め込み）
+- 焼き込み（任意フォント `/fonts` 指定）:
+  ```bash
+  ffmpeg -i input.mp4 -vf "subtitles='subs.srt':fontsdir=/fonts" -sn -c:v libx264 -c:a aac -y output.mp4
+  ```
+- ソフト字幕埋め込み（MP4 `mov_text`）:
+  ```bash
+  ffmpeg -i input.mp4 -i subs.srt -map 0:v:0 -map 0:a:0? -map 1:0 -c:v libx264 -c:a aac -c:s mov_text -y output.mp4
+  ```
+
+## 18. クリップ間クロスフェードトランジション（`xfade` + `acrossfade`）
+```bash
+ffmpeg -i clip1.mp4 -i clip2.mp4 \
+  -filter_complex "[0:v]trim=0:10,setpts=PTS-STARTPTS,fps=30,format=yuv420p[cv0];[0:a]atrim=0:10,asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[ca0];[1:v]trim=0:10,setpts=PTS-STARTPTS,fps=30,format=yuv420p[cv1];[1:a]atrim=0:10,asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[ca1];[cv0][cv1]xfade=transition=fade:duration=1.00:offset=9.000[vcat];[ca0][ca1]acrossfade=d=1.00:c1=tri:c2=tri[acat]" \
+  -map "[vcat]" -map "[acat]" -c:v libx264 -c:a aac -y output.mp4
+```
+
+## 19. 高品質 GIF（2ステップ統合パレット）& アニメ WebP（`libwebp_anim`）
+- GIF:
+  ```bash
+  ffmpeg -i input.mp4 -ss 2.000 -to 7.000 \
+    -filter_complex "[0:v]scale=480:-2:flags=lanczos,fps=12[v_base];[v_base]split[gif_a][gif_b];[gif_a]palettegen=stats_mode=diff[gif_p];[gif_b][gif_p]paletteuse=dither=bayer:bayer_scale=3[vout]" \
+    -map "[vout]" -an -loop 0 -y output.gif
+  ```
+- アニメ WebP:
+  ```bash
+  ffmpeg -i input.mp4 -ss 2.000 -to 7.000 \
+    -vf "scale=480:-2:flags=lanczos,fps=12" -an \
+    -c:v libwebp_anim -lossless 0 -q:v 75 -loop 0 -preset default -y output.webp
+  ```

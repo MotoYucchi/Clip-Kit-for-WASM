@@ -14,33 +14,24 @@ export interface AudioOutputPad {
 }
 
 export interface FilterGraphPlan {
-  /** Whether we need -filter_complex */
   useFilterComplex: boolean;
-  /** Value for -filter_complex when useFilterComplex is true */
   filterComplex: string | null;
-  /** Output pad label for video when useFilterComplex is true */
   videoOutLabel: string | null;
-  /** Output pad labels for audio when useFilterComplex is true */
   audioOutPads: AudioOutputPad[];
-  /** Simple -vf filter chain when useFilterComplex is false */
   videoFilters: string[];
-  /** Simple -af filter chain when useFilterComplex is false */
   audioFilters: string[];
-  /** Whether any video pixel transformation requires re-encoding */
   requiresVideoReencode: boolean;
-  /** Whether any audio transformation requires re-encoding */
   requiresAudioReencode: boolean;
-  /** Resolved final output dimensions */
   outputDimensions: Dimensions;
-  /** Resolved target FPS if explicitly set or CFR forced */
   targetFps: number | null;
-  /** Total timeline duration before global speed adjustment */
   timelineDurationSec: number;
-  /** Final output duration after speed adjustment */
   effectiveDurationSec: number;
 }
 
 export function resolveTargetFps(metadata: MediaMetadata, config: EditConfig): number | null {
+  if (config.container === 'gif' || config.container === 'webp') {
+    return clamp(Math.round(config.animatedFps || 12), 5, 24);
+  }
   if (config.fpsPreset === 'custom') {
     return clamp(config.customFps || 30, 5, 120);
   }
@@ -53,10 +44,6 @@ export function resolveTargetFps(metadata: MediaMetadata, config: EditConfig): n
   return null;
 }
 
-/**
- * 0.5〜2.0 の範囲外速度でもピッチ維持できるよう atempo を多段連結する。
- * 例: 0.25x -> ["atempo=0.5", "atempo=0.5"], 4x -> ["atempo=2.0", "atempo=2.0"]
- */
 export function buildAtempoFilters(speed: number): string[] {
   const safeSpeed = clamp(speed, 0.25, 4);
   if (Math.abs(safeSpeed - 1) < 0.001) return [];
@@ -79,9 +66,6 @@ export function buildAtempoFilters(speed: number): string[] {
   return filters;
 }
 
-/**
- * HDR → SDR トーンマッピングフィルタチェーン（@ffmpeg/core 同梱 libzimg + tonemap 使用）。
- */
 export function buildHdrToSdrFilters(): string[] {
   return [
     'zscale=t=linear:npl=100',
@@ -93,9 +77,6 @@ export function buildHdrToSdrFilters(): string[] {
   ];
 }
 
-/**
- * クロップ → ユーザー回転 → 解像度変更 → 画面比率変更の順に最終出力解像度を算出する。
- */
 export function computeOutputDimensions(
   metadata: MediaMetadata,
   config: EditConfig
@@ -161,7 +142,35 @@ export function computeOutputDimensions(
     }
   }
 
+  // Animated GIF / WebP optional max width cap
+  if (
+    (config.container === 'gif' || config.container === 'webp') &&
+    config.animatedWidth > 0 &&
+    w > config.animatedWidth
+  ) {
+    const scale = config.animatedWidth / w;
+    w = makeEven(config.animatedWidth);
+    h = makeEven(h * scale);
+  }
+
   return { width: makeEven(w), height: makeEven(h) };
+}
+
+function getWatermarkOverlayPosition(config: EditConfig): string {
+  const m = Math.round(clamp(config.watermark.marginPx, 0, 200));
+  switch (config.watermark.position) {
+    case 'top-left':
+      return `${m}:${m}`;
+    case 'top-right':
+      return `W-w-${m}:${m}`;
+    case 'bottom-left':
+      return `${m}:H-h-${m}`;
+    case 'center':
+      return '(W-w)/2:(H-h)/2';
+    case 'bottom-right':
+    default:
+      return `W-w-${m}:H-h-${m}`;
+  }
 }
 
 export interface MultiInputGraphOptions {
@@ -171,16 +180,14 @@ export interface MultiInputGraphOptions {
   selectedClipId?: string | null;
   audioTracks?: AudioOverlayTrack[];
   config: EditConfig;
-  /** Map from sourceId -> FFmpeg input index (0..M-1) */
   sourceInputIndexMap?: Map<string, number>;
-  /** Starting FFmpeg input index for active audio overlay tracks */
   audioTrackStartInputIndex?: number;
+  watermarkInputIndex?: number | null;
+  telopInputIndex?: number | null;
+  burnInSubtitleVirtualPath?: string | null;
+  hasSubtitleFont?: boolean;
 }
 
-/**
- * 単一クリップ〜複数クリップ連結・多トラック音声・HDR→SDR・CFR・画面比率3モードを
- * 単一エンコード用の FFmpeg フィルタグラフへ統合する。
- */
 export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphPlan {
   const {
     primaryMetadata,
@@ -191,16 +198,22 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     config,
     sourceInputIndexMap,
     audioTrackStartInputIndex = 1,
+    watermarkInputIndex = null,
+    telopInputIndex = null,
+    burnInSubtitleVirtualPath = null,
+    hasSubtitleFont = false,
   } = opts;
 
-  const activeAudioTracks = audioTracks.filter((tr) => !tr.muted);
+  const isAnimatedImage = config.container === 'gif' || config.container === 'webp';
+  const activeAudioTracks = isAnimatedImage ? [] : audioTracks.filter((tr) => !tr.muted);
   const isMultiClip = clips.length > 1;
   const hasOverlayAudio = activeAudioTracks.length > 0 && config.taskType === 'video';
   const targetFps = resolveTargetFps(primaryMetadata, config);
   const outputDimensions = computeOutputDimensions(primaryMetadata, config);
   const scaleFlag = config.scaleAlgorithm === 'bicubic' ? 'bicubic' : 'lanczos';
 
-  // Calculate timeline duration
+  // Calculate timeline duration (including transition overlap deduction when xfade is used)
+  const clipEffectiveDurs: number[] = [];
   let timelineDurationSec = 0;
   let effectiveDurationSec = 0;
   const globalSpeed = config.speedScope === 'all' ? clamp(config.speed, 0.25, 4) : 1;
@@ -210,22 +223,57 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     effectiveDurationSec = timelineDurationSec / globalSpeed;
   } else {
     for (const c of clips) {
-      const segDur = config.trimEnabled || isMultiClip
-        ? Math.max(0.05, c.endSec - c.startSec)
-        : Math.max(0.05, primaryMetadata.durationSec);
+      const segDur =
+        config.trimEnabled || isMultiClip
+          ? Math.max(0.05, c.endSec - c.startSec)
+          : Math.max(0.05, primaryMetadata.durationSec);
       timelineDurationSec += segDur;
       const clipSpeed =
         config.speedScope === 'selectedClip' && c.id === selectedClipId
           ? clamp(config.speed, 0.25, 4)
           : globalSpeed;
-      effectiveDurationSec += segDur / clipSpeed;
+      const eff = segDur / clipSpeed;
+      clipEffectiveDurs.push(eff);
+      effectiveDurationSec += eff;
     }
   }
 
+  const useXfadeTransition =
+    isMultiClip && primaryMetadata.hasVideo && config.clipTransition !== 'none';
+  const safeTransitionDur = useXfadeTransition
+    ? Math.max(
+        0.1,
+        Math.min(
+          clamp(config.clipTransitionDurationSec, 0.2, 2.0),
+          ...clipEffectiveDurs.map((d) => Math.max(0.1, d * 0.4))
+        )
+      )
+    : 0;
+
+  if (useXfadeTransition) {
+    effectiveDurationSec = Math.max(
+      0.1,
+      effectiveDurationSec - safeTransitionDur * (clips.length - 1)
+    );
+  }
+
+  // --- Pre-aspect video filters ---
   const preAspectFilters: string[] = [];
   const postAspectFilters: string[] = [];
 
   if (primaryMetadata.hasVideo) {
+    if (config.deinterlace) {
+      preAspectFilters.push('yadif=mode=0:parity=-1:deint=0');
+    }
+
+    if (config.videoDenoise === 'light') {
+      preAspectFilters.push('hqdn3d=1.5:1.5:6:6');
+    } else if (config.videoDenoise === 'medium') {
+      preAspectFilters.push('hqdn3d=3:3:6:6');
+    } else if (config.videoDenoise === 'strong') {
+      preAspectFilters.push('hqdn3d=6:4.5:8:6');
+    }
+
     if (config.convertHdrToSdr) {
       preAspectFilters.push(...buildHdrToSdrFilters());
     }
@@ -250,9 +298,24 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     if (config.flipHorizontal) preAspectFilters.push('hflip');
     if (config.flipVertical) preAspectFilters.push('vflip');
 
-    if (config.aspectPreset === 'original' && config.resolutionPreset !== 'original') {
+    if (
+      config.aspectPreset === 'original' &&
+      (config.resolutionPreset !== 'original' ||
+        (isAnimatedImage && config.animatedWidth > 0))
+    ) {
       preAspectFilters.push(
         `scale=${outputDimensions.width}:${outputDimensions.height}:flags=${scaleFlag}`
+      );
+    }
+
+    // Color grading (eq)
+    const hasColorAdjust =
+      Math.abs(config.brightness) >= 0.01 ||
+      Math.abs(config.contrast - 1) >= 0.01 ||
+      Math.abs(config.saturation - 1) >= 0.01;
+    if (hasColorAdjust) {
+      postAspectFilters.push(
+        `eq=brightness=${clamp(config.brightness, -0.5, 0.5).toFixed(2)}:contrast=${clamp(config.contrast, 0.5, 2).toFixed(2)}:saturation=${clamp(config.saturation, 0, 2.5).toFixed(2)}`
       );
     }
 
@@ -266,16 +329,42 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     if (targetFps !== null) {
       postAspectFilters.push(`fps=${targetFps}`);
     }
+
+    // Video fade in / out
+    if (config.videoFadeInSec > 0) {
+      postAspectFilters.push(
+        `fade=t=in:st=0:d=${Math.min(config.videoFadeInSec, effectiveDurationSec).toFixed(2)}`
+      );
+    }
+    if (config.videoFadeOutSec > 0) {
+      const fadeDur = Math.min(config.videoFadeOutSec, effectiveDurationSec);
+      const fadeStart = Math.max(0, effectiveDurationSec - fadeDur);
+      postAspectFilters.push(`fade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDur.toFixed(2)}`);
+    }
+
+    // External subtitle burn-in (SRT / ASS)
+    if (config.subtitleHandling === 'burnIn' && burnInSubtitleVirtualPath) {
+      const escaped = burnInSubtitleVirtualPath.replace(/:/g, '\\:');
+      const fontOpt = hasSubtitleFont ? ':fontsdir=/fonts' : '';
+      postAspectFilters.push(`subtitles='${escaped}'${fontOpt}`);
+    }
   }
 
-  // Original audio linear filters (used in both simple and complex graphs)
+  // --- Original audio linear filters ---
   const keepOriginalAudio =
+    !isAnimatedImage &&
     primaryMetadata.hasAudio &&
     config.muteMode !== 'all' &&
     (!hasOverlayAudio || config.originalAudioHandling !== 'replace');
 
   const origAudioFilters: string[] = [];
   if (keepOriginalAudio) {
+    if (config.audioDenoise === 'light') {
+      origAudioFilters.push('afftdn=nf=-25');
+    } else if (config.audioDenoise === 'strong') {
+      origAudioFilters.push('afftdn=nf=-20');
+    }
+
     if (config.muteMode === 'range') {
       const trimOffset = config.trimEnabled && !isMultiClip && clips[0] ? clips[0].startSec : 0;
       const relStart = Math.max(0, config.muteRangeStartSec - trimOffset);
@@ -306,11 +395,20 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     !isMultiClip &&
     config.speedScope === 'selectedClip' &&
     Math.abs(config.speed - 1) >= 0.001;
+  const hasVisualOverlayInput =
+    primaryMetadata.hasVideo && (watermarkInputIndex !== null || telopInputIndex !== null);
+  const needsGifPaletteComplex = primaryMetadata.hasVideo && config.container === 'gif';
+
   const useFilterComplex =
-    isMultiClip || hasOverlayAudio || needsBlurComplex || needsSelectedClipSpeedComplex;
+    isMultiClip ||
+    hasOverlayAudio ||
+    needsBlurComplex ||
+    needsSelectedClipSpeedComplex ||
+    hasVisualOverlayInput ||
+    needsGifPaletteComplex;
 
   // =========================================================================
-  // SIMPLE LINEAR GRAPH (-vf / -af) — allows fast stream copy when clean
+  // SIMPLE LINEAR GRAPH (-vf / -af)
   // =========================================================================
   if (!useFilterComplex) {
     const videoFilters = [...preAspectFilters];
@@ -333,6 +431,7 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     const requiresVideoReencode =
       primaryMetadata.hasVideo &&
       (videoFilters.length > 0 ||
+        isAnimatedImage ||
         (config.trimEnabled && config.cutMode === 'accurate') ||
         config.rateControlMode !== 'preset' ||
         config.convertVfrToCfr);
@@ -359,7 +458,6 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
 
   // =========================================================================
   // COMPLEX FILTER GRAPH (-filter_complex)
-  // Handles: Multi-Clip Concat, Blur Background, Multi-Track Audio, Loudnorm
   // =========================================================================
   const graphSegments: string[] = [];
   let currentVideoLabel = '[0:v]';
@@ -368,9 +466,8 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
   const baseNormW = makeEven(primaryMetadata.width || 1280);
   const baseNormH = makeEven(primaryMetadata.height || 720);
 
-  // 1. Multi-clip trim + auto-normalize + concat
+  // 1. Multi-clip trim + normalize + concat OR xfade/acrossfade transition
   if (isMultiClip) {
-    const concatInputs: string[] = [];
     const anySourceHasAudio =
       keepOriginalAudio &&
       clips.some((c) => {
@@ -395,12 +492,12 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
           `pad=${baseNormW}:${baseNormH}:(ow-iw)/2:(oh-ih)/2:color=0x000000`,
           'setsar=1',
           `fps=${concatFps}`,
+          'format=yuv420p',
         ];
         if (Math.abs(clipSpeed - 1) >= 0.001) {
           vSteps.push(`setpts=${(1 / clipSpeed).toFixed(5)}*PTS`);
         }
         graphSegments.push(`[${inIdx}:v]${vSteps.join(',')}[cv${idx}]`);
-        concatInputs.push(`[cv${idx}]`);
       }
 
       if (anySourceHasAudio) {
@@ -416,26 +513,56 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
           }
           graphSegments.push(`[${inIdx}:a]${aSteps.join(',')}[ca${idx}]`);
         } else {
-          // Generate silence matching clip duration so concat stays in sync
           const silentDur = segDur / clipSpeed;
           graphSegments.push(
             `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${silentDur.toFixed(3)}[ca${idx}]`
           );
         }
-        concatInputs.push(`[ca${idx}]`);
       }
     });
 
-    const vCount = primaryMetadata.hasVideo ? 1 : 0;
-    const aCount = anySourceHasAudio ? 1 : 0;
-    const outLabels = `${vCount ? '[vcat]' : ''}${aCount ? '[acat]' : ''}`;
-    graphSegments.push(
-      `${concatInputs.join('')}concat=n=${clips.length}:v=${vCount}:a=${aCount}${outLabels}`
-    );
-    if (vCount) currentVideoLabel = '[vcat]';
-    if (aCount) currentOrigAudioLabel = '[acat]';
+    if (useXfadeTransition) {
+      // Chain xfade for video and acrossfade for audio
+      let prevV = '[cv0]';
+      let accumDur = clipEffectiveDurs[0] ?? 1;
+      for (let i = 1; i < clips.length; i++) {
+        const offset = Math.max(0.05, accumDur - safeTransitionDur);
+        const outV = i === clips.length - 1 ? '[vcat]' : `[vxf${i}]`;
+        graphSegments.push(
+          `${prevV}[cv${i}]xfade=transition=${config.clipTransition}:duration=${safeTransitionDur.toFixed(2)}:offset=${offset.toFixed(3)}${outV}`
+        );
+        prevV = outV;
+        accumDur = offset + (clipEffectiveDurs[i] ?? 1);
+      }
+      currentVideoLabel = '[vcat]';
+
+      if (anySourceHasAudio) {
+        let prevA = '[ca0]';
+        for (let i = 1; i < clips.length; i++) {
+          const outA = i === clips.length - 1 ? '[acat]' : `[axf${i}]`;
+          graphSegments.push(
+            `${prevA}[ca${i}]acrossfade=d=${safeTransitionDur.toFixed(2)}:c1=tri:c2=tri${outA}`
+          );
+          prevA = outA;
+        }
+        currentOrigAudioLabel = '[acat]';
+      }
+    } else {
+      const concatInputs: string[] = [];
+      for (let i = 0; i < clips.length; i++) {
+        if (primaryMetadata.hasVideo) concatInputs.push(`[cv${i}]`);
+        if (anySourceHasAudio) concatInputs.push(`[ca${i}]`);
+      }
+      const vCount = primaryMetadata.hasVideo ? 1 : 0;
+      const aCount = anySourceHasAudio ? 1 : 0;
+      const outLabels = `${vCount ? '[vcat]' : ''}${aCount ? '[acat]' : ''}`;
+      graphSegments.push(
+        `${concatInputs.join('')}concat=n=${clips.length}:v=${vCount}:a=${aCount}${outLabels}`
+      );
+      if (vCount) currentVideoLabel = '[vcat]';
+      if (aCount) currentOrigAudioLabel = '[acat]';
+    }
   } else if (needsSelectedClipSpeedComplex && clips[0]) {
-    // Single clip with selectedClip speed applies directly
     const ptsFactor = (1 / clamp(config.speed, 0.25, 4)).toFixed(5);
     if (primaryMetadata.hasVideo) {
       graphSegments.push(`[0:v]setpts=${ptsFactor}*PTS[vspd]`);
@@ -447,7 +574,7 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     }
   }
 
-  // 2. Global Video Transforms + Aspect Ratio (Stretch / Letterbox / Blur)
+  // 2. Global Video Transforms + Aspect Ratio + Overlays + GIF Palette
   let videoOutLabel: string | null = null;
   if (primaryMetadata.hasVideo) {
     const outW = outputDimensions.width;
@@ -467,8 +594,8 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
       graphSegments.push(
         `[fg_src]scale=${outW}:${outH}:force_original_aspect_ratio=decrease:flags=${scaleFlag}[fg]`
       );
-      graphSegments.push(`[bg][fg]overlay=(W-w)/2:(H-h)/2${postChain},setsar=1[vout]`);
-      videoOutLabel = '[vout]';
+      graphSegments.push(`[bg][fg]overlay=(W-w)/2:(H-h)/2${postChain},setsar=1[v_base]`);
+      currentVideoLabel = '[v_base]';
     } else {
       const vAll = [...preAspectFilters];
       if (config.aspectPreset !== 'original') {
@@ -485,106 +612,144 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
       }
       vAll.push(...postAspectFilters);
       if (vAll.length > 0) {
-        graphSegments.push(`${currentVideoLabel}${vAll.join(',')}[vout]`);
-        videoOutLabel = '[vout]';
-      } else {
-        videoOutLabel = currentVideoLabel;
+        graphSegments.push(`${currentVideoLabel}${vAll.join(',')}[v_base]`);
+        currentVideoLabel = '[v_base]';
       }
+    }
+
+    // 2a. Image Watermark Overlay
+    if (watermarkInputIndex !== null && config.watermark.enabled) {
+      const wmW = Math.max(16, makeEven((outW * clamp(config.watermark.scalePct, 5, 60)) / 100));
+      const wmAlpha = clamp(config.watermark.opacity, 0.1, 1).toFixed(2);
+      const wmPos = getWatermarkOverlayPosition(config);
+      graphSegments.push(
+        `[${watermarkInputIndex}:v]scale=${wmW}:-1:flags=lanczos,format=rgba,colorchannelmixer=aa=${wmAlpha}[wm_img]`
+      );
+      graphSegments.push(`${currentVideoLabel}[wm_img]overlay=${wmPos}[v_wm]`);
+      currentVideoLabel = '[v_wm]';
+    }
+
+    // 2b. Canvas-Rendered Japanese/Unicode Text Telop PNG Overlay
+    if (telopInputIndex !== null && config.textOverlay.enabled) {
+      const enableExpr = config.textOverlay.useTimeRange
+        ? `:enable='between(t,${Math.max(0, config.textOverlay.startSec).toFixed(2)},${Math.max(0.1, config.textOverlay.endSec).toFixed(2)})'`
+        : '';
+      graphSegments.push(
+        `${currentVideoLabel}[${telopInputIndex}:v]overlay=0:0${enableExpr}[v_txt]`
+      );
+      currentVideoLabel = '[v_txt]';
+    }
+
+    // 2c. High-quality GIF Palette Generation
+    if (needsGifPaletteComplex) {
+      graphSegments.push(`${currentVideoLabel}split[gif_a][gif_b]`);
+      graphSegments.push('[gif_a]palettegen=stats_mode=diff[gif_p]');
+      graphSegments.push('[gif_b][gif_p]paletteuse=dither=bayer:bayer_scale=3[vout]');
+      videoOutLabel = '[vout]';
+    } else {
+      videoOutLabel = currentVideoLabel;
     }
   }
 
   // 3. Audio Processing & Multi-Track Mixing / Separate Tracks
   const audioOutPads: AudioOutputPad[] = [];
 
-  if (hasOverlayAudio) {
-    const preparedPads: AudioOutputPad[] = [];
+  if (!isAnimatedImage) {
+    if (hasOverlayAudio) {
+      const preparedPads: AudioOutputPad[] = [];
 
-    // 3a. Original audio stream if kept/mixed
-    if (keepOriginalAudio) {
-      const origSteps = ['aresample=48000', 'aformat=channel_layouts=stereo', ...origAudioFilters];
-      graphSegments.push(`${currentOrigAudioLabel}${origSteps.join(',')}[orig_a]`);
-      preparedPads.push({ label: '[orig_a]', title: 'Original Audio' });
-    }
-
-    // 3b. Each additional audio overlay track
-    activeAudioTracks.forEach((track, idx) => {
-      const inIdx = audioTrackStartInputIndex + idx;
-      const trimS = Math.max(0, track.trimStartSec);
-      const trimE = Math.max(trimS + 0.1, track.trimEndSec || track.durationSec || effectiveDurationSec);
-      const segLen = Math.max(0.1, trimE - trimS);
-
-      const steps: string[] = [
-        `atrim=start=${trimS.toFixed(3)}:end=${trimE.toFixed(3)}`,
-        'asetpts=PTS-STARTPTS',
-        'aresample=48000',
-        'aformat=channel_layouts=stereo',
-      ];
-
-      let activeLen = segLen;
-      if (track.loop && effectiveDurationSec > segLen) {
-        const remainingDur = Math.max(0.1, effectiveDurationSec - track.offsetSec);
-        steps.push(`aloop=loop=-1:size=2000000000`, `atrim=0:${remainingDur.toFixed(3)}`, 'asetpts=PTS-STARTPTS');
-        activeLen = remainingDur;
+      if (keepOriginalAudio) {
+        const origSteps = ['aresample=48000', 'aformat=channel_layouts=stereo', ...origAudioFilters];
+        graphSegments.push(`${currentOrigAudioLabel}${origSteps.join(',')}[orig_a]`);
+        preparedPads.push({ label: '[orig_a]', title: 'Original Audio' });
       }
 
-      if (track.fadeInSec > 0) {
-        steps.push(`afade=t=in:st=0:d=${Math.min(track.fadeInSec, activeLen).toFixed(2)}`);
-      }
-      if (track.fadeOutSec > 0) {
-        const fadeDur = Math.min(track.fadeOutSec, activeLen);
-        const fadeStart = Math.max(0, activeLen - fadeDur);
-        steps.push(`afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDur.toFixed(2)}`);
-      }
+      activeAudioTracks.forEach((track, idx) => {
+        const inIdx = audioTrackStartInputIndex + idx;
+        const trimS = Math.max(0, track.trimStartSec);
+        const trimE = Math.max(
+          trimS + 0.1,
+          track.trimEndSec || track.durationSec || effectiveDurationSec
+        );
+        const segLen = Math.max(0.1, trimE - trimS);
 
-      if (Math.abs(track.volume - 1) >= 0.01) {
-        steps.push(`volume=${clamp(track.volume, 0, 2).toFixed(2)}`);
-      }
+        const steps: string[] = [
+          `atrim=start=${trimS.toFixed(3)}:end=${trimE.toFixed(3)}`,
+          'asetpts=PTS-STARTPTS',
+          'aresample=48000',
+          'aformat=channel_layouts=stereo',
+        ];
 
-      if (track.offsetSec > 0.01) {
-        const delayMs = Math.round(track.offsetSec * 1000);
-        steps.push(`adelay=${delayMs}|${delayMs}`);
-      }
+        let activeLen = segLen;
+        if (track.loop && effectiveDurationSec > segLen) {
+          const remainingDur = Math.max(0.1, effectiveDurationSec - track.offsetSec);
+          steps.push(
+            'aloop=loop=-1:size=2000000000',
+            `atrim=0:${remainingDur.toFixed(3)}`,
+            'asetpts=PTS-STARTPTS'
+          );
+          activeLen = remainingDur;
+        }
 
-      const padLabel = `[bgm_${idx}]`;
-      graphSegments.push(`[${inIdx}:a]${steps.join(',')}${padLabel}`);
-      preparedPads.push({ label: padLabel, title: track.name });
-    });
+        if (track.fadeInSec > 0) {
+          steps.push(`afade=t=in:st=0:d=${Math.min(track.fadeInSec, activeLen).toFixed(2)}`);
+        }
+        if (track.fadeOutSec > 0) {
+          const fadeDur = Math.min(track.fadeOutSec, activeLen);
+          const fadeStart = Math.max(0, activeLen - fadeDur);
+          steps.push(`afade=t=out:st=${fadeStart.toFixed(2)}:d=${fadeDur.toFixed(2)}`);
+        }
 
-    const canSeparateTracks =
-      config.audioOutputMode === 'separate' &&
-      (config.container === 'mp4' || config.container === 'mkv');
+        if (Math.abs(track.volume - 1) >= 0.01) {
+          steps.push(`volume=${clamp(track.volume, 0, 2).toFixed(2)}`);
+        }
 
-    if (canSeparateTracks) {
-      if (config.enableLoudnorm) {
-        preparedPads.forEach((pad, idx) => {
-          const normLabel = `[anorm_${idx}]`;
-          graphSegments.push(`${pad.label}loudnorm=I=-16:TP=-1.5:LRA=11${normLabel}`);
-          audioOutPads.push({ label: normLabel, title: pad.title });
-        });
-      } else {
-        audioOutPads.push(...preparedPads);
-      }
-    } else if (preparedPads.length === 1) {
-      if (config.enableLoudnorm) {
-        graphSegments.push(`${preparedPads[0].label}loudnorm=I=-16:TP=-1.5:LRA=11[aout]`);
+        if (track.offsetSec > 0.01) {
+          const delayMs = Math.round(track.offsetSec * 1000);
+          steps.push(`adelay=${delayMs}|${delayMs}`);
+        }
+
+        const padLabel = `[bgm_${idx}]`;
+        graphSegments.push(`[${inIdx}:a]${steps.join(',')}${padLabel}`);
+        preparedPads.push({ label: padLabel, title: track.name });
+      });
+
+      const canSeparateTracks =
+        config.audioOutputMode === 'separate' &&
+        (config.container === 'mp4' || config.container === 'mkv');
+
+      if (canSeparateTracks) {
+        if (config.enableLoudnorm) {
+          preparedPads.forEach((pad, idx) => {
+            const normLabel = `[anorm_${idx}]`;
+            graphSegments.push(`${pad.label}loudnorm=I=-16:TP=-1.5:LRA=11${normLabel}`);
+            audioOutPads.push({ label: normLabel, title: pad.title });
+          });
+        } else {
+          audioOutPads.push(...preparedPads);
+        }
+      } else if (preparedPads.length === 1) {
+        if (config.enableLoudnorm) {
+          graphSegments.push(`${preparedPads[0].label}loudnorm=I=-16:TP=-1.5:LRA=11[aout]`);
+          audioOutPads.push({ label: '[aout]' });
+        } else {
+          audioOutPads.push({ label: preparedPads[0].label });
+        }
+      } else if (preparedPads.length > 1) {
+        const mixInputs = preparedPads.map((p) => p.label).join('');
+        const loudnormSuffix = config.enableLoudnorm ? ',loudnorm=I=-16:TP=-1.5:LRA=11' : '';
+        graphSegments.push(
+          `${mixInputs}amix=inputs=${preparedPads.length}:duration=first:dropout_transition=2:normalize=0${loudnormSuffix}[aout]`
+        );
         audioOutPads.push({ label: '[aout]' });
-      } else {
-        audioOutPads.push({ label: preparedPads[0].label });
       }
-    } else if (preparedPads.length > 1) {
-      const mixInputs = preparedPads.map((p) => p.label).join('');
-      const loudnormSuffix = config.enableLoudnorm ? ',loudnorm=I=-16:TP=-1.5:LRA=11' : '';
-      graphSegments.push(
-        `${mixInputs}amix=inputs=${preparedPads.length}:duration=first:dropout_transition=2:normalize=0${loudnormSuffix}[aout]`
-      );
-      audioOutPads.push({ label: '[aout]' });
-    }
-  } else if (keepOriginalAudio) {
-    if (origAudioFilters.length > 0) {
-      graphSegments.push(`${currentOrigAudioLabel}${origAudioFilters.join(',')}[aout]`);
-      audioOutPads.push({ label: '[aout]' });
-    } else if (currentOrigAudioLabel !== '[0:a]') {
-      audioOutPads.push({ label: currentOrigAudioLabel });
+    } else if (keepOriginalAudio) {
+      if (origAudioFilters.length > 0) {
+        graphSegments.push(`${currentOrigAudioLabel}${origAudioFilters.join(',')}[aout]`);
+        audioOutPads.push({ label: '[aout]' });
+      } else if (currentOrigAudioLabel !== '[0:a]') {
+        audioOutPads.push({ label: currentOrigAudioLabel });
+      }
     }
   }
 
@@ -604,9 +769,6 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
   };
 }
 
-/**
- * Phase 1 互換ラッパー（単一メタデータ + 単一クリップ向け）
- */
 export function buildFilterGraph(
   metadata: MediaMetadata,
   config: EditConfig,

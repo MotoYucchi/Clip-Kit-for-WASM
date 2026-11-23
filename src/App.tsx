@@ -7,13 +7,16 @@ import { Header } from './components/layout/Header';
 import { DropZone } from './components/media/DropZone';
 import { MetadataBar } from './components/media/MetadataBar';
 import { VideoPreview } from './components/media/VideoPreview';
+import { BatchModal } from './components/modals/BatchModal';
 import { ProgressModal } from './components/modals/ProgressModal';
 import { ShortcutsModal } from './components/modals/ShortcutsModal';
 import { Timeline } from './components/timeline/Timeline';
 import { buildFullFFmpegCommand } from './engine/commandBuilder';
 import { ffmpegClient } from './engine/ffmpegClient';
+import { computeOutputDimensions } from './engine/filterGraphBuilder';
 import { probeViaBrowserElement } from './engine/probeParser';
 import { translate } from './i18n';
+import { renderTextOverlayToPngFile } from './services/textOverlayRenderer';
 import { wakeLockService } from './services/wakeLockService';
 import { extractWaveformPeaks } from './services/waveformService';
 import { useJobStore } from './store/useJobStore';
@@ -39,6 +42,9 @@ export function App() {
     clips,
     selectedClipId,
     audioTracks,
+    watermarkFile,
+    subtitleFile,
+    subtitleFontFile,
     config,
     pendingRecovery,
     setSource,
@@ -210,6 +216,13 @@ export function App() {
     if (!source || clips.length === 0) return;
 
     setMobileSheetOpen(false);
+    const outDims = computeOutputDimensions(source.metadata, config);
+    const telopPngFile = await renderTextOverlayToPngFile(
+      config.textOverlay,
+      outDims.width || source.metadata.width || 1280,
+      outDims.height || source.metadata.height || 720
+    );
+
     const plan = buildFullFFmpegCommand({
       primarySource: source,
       sources,
@@ -217,6 +230,10 @@ export function App() {
       selectedClipId,
       audioTracks,
       config,
+      watermarkFile,
+      telopPngFile,
+      subtitleFile,
+      subtitleFontFile,
     });
     const wakeLocked = await wakeLockService.acquire();
     startJob(wakeLocked);
@@ -371,6 +388,7 @@ export function App() {
 
       <ProgressModal onCancel={handleCancel} />
       <ShortcutsModal />
+      <BatchModal />
 
       {toastMessage && (
         <div className="toast-container" role="status" aria-live="polite">

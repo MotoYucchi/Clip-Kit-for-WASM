@@ -6,7 +6,7 @@ import {
 import { COMPRESSION_PRESETS } from '../config/presets';
 import type { AudioOverlayTrack, ClipSegment, EditConfig } from '../types/edit';
 import type { MediaMetadata, MediaSourceItem } from '../types/media';
-import { clamp, sanitizeFilename, stripExtension } from '../utils/formatters';
+import { clamp, getExtension, sanitizeFilename, stripExtension } from '../utils/formatters';
 import { buildFullFilterGraph } from './filterGraphBuilder';
 
 export interface CommandInputSpec {
@@ -14,12 +14,16 @@ export interface CommandInputSpec {
   file: File;
 }
 
+export interface ExtraVirtualFileSpec {
+  virtualPath: string;
+  file: File;
+}
+
 export interface FFmpegCommandPlan {
-  /** Input files in exact order matching __IN_0__, __IN_1__, ... */
   inputs: CommandInputSpec[];
-  /** Optional Pass 1 args when 2-pass encoding is enabled */
+  /** Auxiliary files written to FFmpeg virtual FS (e.g. subtitle file for burn-in, custom font) */
+  extraFiles: ExtraVirtualFileSpec[];
   pass1Args: string[] | null;
-  /** Main execution args (single-pass or Pass 2) */
   args: string[];
   outputVirtualName: string;
   downloadFileName: string;
@@ -32,10 +36,6 @@ export interface FFmpegCommandPlan {
   compatWarnings: string[];
 }
 
-/**
- * 目標ファイルサイズ (MB) と出力尺・音声ビットレートから映像目標ビットレート (kbps) を自動算出する。
- * コンテナオーバーヘッド (~3%) を差し引き、安全に目標サイズ内へ収める。
- */
 export function computeTargetVideoBitrateKbps(
   targetSizeMB: number,
   durationSec: number,
@@ -72,10 +72,26 @@ export interface BuildCommandOptions {
   selectedClipId?: string | null;
   audioTracks: AudioOverlayTrack[];
   config: EditConfig;
+  watermarkFile?: File | null;
+  telopPngFile?: File | null;
+  subtitleFile?: File | null;
+  subtitleFontFile?: File | null;
 }
 
 export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommandPlan {
-  const { primarySource, sources, clips, selectedClipId = null, audioTracks, config } = opts;
+  const {
+    primarySource,
+    sources,
+    clips,
+    selectedClipId = null,
+    audioTracks,
+    config,
+    watermarkFile = null,
+    telopPngFile = null,
+    subtitleFile = null,
+    subtitleFontFile = null,
+  } = opts;
+
   const metadata = primarySource.metadata;
   const primaryClip = clips[0] ?? {
     id: 'clip-0',
@@ -84,7 +100,8 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     endSec: metadata.durationSec,
   };
   const baseName = sanitizeFilename(stripExtension(metadata.fileName));
-  const activeAudioTracks = audioTracks.filter((tr) => !tr.muted);
+  const isAnimatedImage = config.container === 'gif' || config.container === 'webp';
+  const activeAudioTracks = isAnimatedImage ? [] : audioTracks.filter((tr) => !tr.muted);
 
   const trimStart = config.trimEnabled ? clamp(primaryClip.startSec, 0, metadata.durationSec) : 0;
   const trimEnd = config.trimEnabled
@@ -103,18 +120,40 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
 
     const visualOnlyConfig: EditConfig = {
       ...config,
+      container: 'mp4',
       speed: 1,
       reverse: false,
       trimEnabled: false,
       muteMode: 'all',
+      videoFadeInSec: 0,
+      videoFadeOutSec: 0,
     };
+
+    const inputs: CommandInputSpec[] = [{ placeholder: '__IN_0__', file: primarySource.file }];
+    let watermarkInputIndex: number | null = null;
+    if (config.watermark.enabled && watermarkFile) {
+      watermarkInputIndex = inputs.length;
+      inputs.push({ placeholder: `__IN_${watermarkInputIndex}__`, file: watermarkFile });
+    }
+    let telopInputIndex: number | null = null;
+    if (config.textOverlay.enabled && telopPngFile) {
+      telopInputIndex = inputs.length;
+      inputs.push({ placeholder: `__IN_${telopInputIndex}__`, file: telopPngFile });
+    }
+
     const graph = buildFullFilterGraph({
       primaryMetadata: metadata,
       clips: [primaryClip],
       config: visualOnlyConfig,
+      watermarkInputIndex,
+      telopInputIndex,
     });
 
     const args: string[] = ['-ss', snapshotTime.toFixed(3), '-i', '__IN_0__'];
+    for (let i = 1; i < inputs.length; i++) {
+      args.push('-i', inputs[i].placeholder);
+    }
+
     if (graph.useFilterComplex && graph.filterComplex && graph.videoOutLabel) {
       args.push('-filter_complex', graph.filterComplex, '-map', graph.videoOutLabel);
     } else if (graph.videoFilters.length > 0) {
@@ -131,13 +170,14 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     args.push('-y', outputVirtualName);
 
     return {
-      inputs: [{ placeholder: '__IN_0__', file: primarySource.file }],
+      inputs,
+      extraFiles: [],
       pass1Args: null,
       args,
       outputVirtualName,
       downloadFileName: `${baseName}_frame_${Math.round(snapshotTime * 10)}ds.${ext}`,
       mimeType,
-      commandPreview: `ffmpeg ${args.map((a) => (a === '__IN_0__' ? metadata.fileName : a)).join(' ')}`,
+      commandPreview: `ffmpeg ${args.map((a) => inputs.find((x) => x.placeholder === a)?.file.name ?? a).join(' ')}`,
       effectiveDurationSec: 0.1,
       usedStreamCopy: false,
       usedTwoPass: false,
@@ -168,7 +208,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     const graph = buildFullFilterGraph({
       primaryMetadata: metadata,
       clips: [primaryClip],
-      config,
+      config: { ...config, container: 'mp4' },
     });
     if (graph.audioFilters.length > 0) {
       args.push('-af', graph.audioFilters.join(','));
@@ -185,6 +225,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
 
     return {
       inputs: [{ placeholder: '__IN_0__', file: primarySource.file }],
+      extraFiles: [],
       pass1Args: null,
       args,
       outputVirtualName,
@@ -200,14 +241,14 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
   }
 
   // =========================================================================
-  // 3. Video Processing (Single-Clip, Multi-Clip Concat, Multi-Track, 2-Pass)
+  // 3. Video / GIF / Animated WebP Processing
   // =========================================================================
   const containerSpec = CONTAINER_SPECS[config.container];
   const compat = resolveCodecCompatibility(config.container, config.videoCodec, config.audioCodec);
   const presetSpec = COMPRESSION_PRESETS[config.compressionPreset];
 
-  // Collect ordered unique video source inputs referenced by clips
   const inputs: CommandInputSpec[] = [];
+  const extraFiles: ExtraVirtualFileSpec[] = [];
   const sourceInputIndexMap = new Map<string, number>();
 
   const registerSource = (src: MediaSourceItem) => {
@@ -229,6 +270,37 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     inputs.push({ placeholder: `__IN_${idx}__`, file: track.file });
   }
 
+  let watermarkInputIndex: number | null = null;
+  if (metadata.hasVideo && config.watermark.enabled && watermarkFile) {
+    watermarkInputIndex = inputs.length;
+    inputs.push({ placeholder: `__IN_${watermarkInputIndex}__`, file: watermarkFile });
+  }
+
+  let telopInputIndex: number | null = null;
+  if (metadata.hasVideo && config.textOverlay.enabled && telopPngFile) {
+    telopInputIndex = inputs.length;
+    inputs.push({ placeholder: `__IN_${telopInputIndex}__`, file: telopPngFile });
+  }
+
+  let externalSubInputIndex: number | null = null;
+  let burnInSubtitleVirtualPath: string | null = null;
+  let hasSubtitleFont = false;
+  if (!isAnimatedImage && subtitleFile) {
+    const subExt = getExtension(subtitleFile.name) === 'ass' ? 'ass' : 'srt';
+    if (config.subtitleHandling === 'embedExternal') {
+      externalSubInputIndex = inputs.length;
+      inputs.push({ placeholder: `__IN_${externalSubInputIndex}__`, file: subtitleFile });
+    } else if (config.subtitleHandling === 'burnIn') {
+      burnInSubtitleVirtualPath = `subs.${subExt}`;
+      extraFiles.push({ virtualPath: burnInSubtitleVirtualPath, file: subtitleFile });
+      if (subtitleFontFile) {
+        const fontExt = getExtension(subtitleFontFile.name) || 'ttf';
+        extraFiles.push({ virtualPath: `/fonts/subfont.${fontExt}`, file: subtitleFontFile });
+        hasSubtitleFont = true;
+      }
+    }
+  }
+
   const graph = buildFullFilterGraph({
     primaryMetadata: metadata,
     sources,
@@ -238,16 +310,22 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     config,
     sourceInputIndexMap,
     audioTrackStartInputIndex,
+    watermarkInputIndex,
+    telopInputIndex,
+    burnInSubtitleVirtualPath,
+    hasSubtitleFont,
   });
 
   const isMultiInput = inputs.length > 1;
   const isMultiClip = clips.length > 1;
-  const audioMaps = getEffectiveAudioTrackMaps(metadata, config);
+  const audioMaps = isAnimatedImage ? [] : getEffectiveAudioTrackMaps(metadata, config);
   const hasAnyAudioOutput =
-    (graph.useFilterComplex && graph.audioOutPads.length > 0) ||
-    (!graph.useFilterComplex && audioMaps.length > 0);
+    !isAnimatedImage &&
+    ((graph.useFilterComplex && graph.audioOutPads.length > 0) ||
+      (!graph.useFilterComplex && audioMaps.length > 0));
 
   const canVideoCopy =
+    !isAnimatedImage &&
     !isMultiInput &&
     !isMultiClip &&
     !graph.useFilterComplex &&
@@ -255,6 +333,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     !graph.requiresVideoReencode;
 
   const canAudioCopy =
+    !isAnimatedImage &&
     !isMultiInput &&
     !isMultiClip &&
     !graph.useFilterComplex &&
@@ -262,6 +341,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     !graph.requiresAudioReencode;
 
   const isFastCutOnly =
+    !isAnimatedImage &&
     !isMultiInput &&
     !isMultiClip &&
     !graph.useFilterComplex &&
@@ -288,9 +368,8 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
 
   const audioBitrate = config.audioBitrateKbps || presetSpec.audioBitrateKbps;
 
-  // Compute video bitrate for bitrate / targetSize modes
   let computedVideoBitrateKbps: number | null = null;
-  if (effectiveVideoCodec !== 'copy' && metadata.hasVideo) {
+  if (!isAnimatedImage && effectiveVideoCodec !== 'copy' && metadata.hasVideo) {
     if (config.rateControlMode === 'bitrate') {
       computedVideoBitrateKbps = clamp(Math.round(config.targetVideoBitrateKbps || 2000), 120, 50_000);
     } else if (config.rateControlMode === 'targetSize') {
@@ -304,6 +383,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
   }
 
   const usedTwoPass =
+    !isAnimatedImage &&
     Boolean(computedVideoBitrateKbps) &&
     config.enableTwoPass &&
     effectiveVideoCodec !== 'copy' &&
@@ -312,7 +392,6 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
   const buildPassArgs = (passNumber: 0 | 1 | 2): string[] => {
     const args: string[] = [];
 
-    // Inputs
     if (!isMultiClip && !isMultiInput && config.trimEnabled && useVideoCopy && useAudioCopy) {
       args.push('-ss', trimStart.toFixed(3), '-to', trimEnd.toFixed(3), '-i', inputs[0].placeholder);
     } else {
@@ -331,7 +410,9 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
         args.push('-map', graph.videoOutLabel);
       }
       if (passNumber !== 1) {
-        if (graph.audioOutPads.length > 0) {
+        if (isAnimatedImage) {
+          args.push('-an');
+        } else if (graph.audioOutPads.length > 0) {
           for (const pad of graph.audioOutPads) {
             args.push('-map', pad.label);
           }
@@ -351,7 +432,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
         }
       }
       if (passNumber !== 1) {
-        if (audioMaps.length === 0) {
+        if (isAnimatedImage || audioMaps.length === 0) {
           args.push('-an');
         } else {
           for (const mapSpec of audioMaps) {
@@ -364,8 +445,45 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
       }
     }
 
-    // Video codec & rate control
-    if (metadata.hasVideo) {
+    // Subtitle Stream Handling (keep / strip / embedExternal)
+    if (!isAnimatedImage && passNumber !== 1) {
+      if (config.subtitleHandling === 'strip' || config.subtitleHandling === 'burnIn') {
+        args.push('-sn');
+      } else if (config.subtitleHandling === 'keep') {
+        args.push('-map', '0:s?');
+        if (config.container === 'mp4' || config.container === 'mov') {
+          args.push('-c:s', 'mov_text');
+        } else if (config.container === 'mkv') {
+          args.push('-c:s', 'copy');
+        }
+      } else if (config.subtitleHandling === 'embedExternal' && externalSubInputIndex !== null) {
+        args.push('-map', `${externalSubInputIndex}:0`);
+        if (config.container === 'mp4' || config.container === 'mov') {
+          args.push('-c:s', 'mov_text');
+        } else {
+          args.push('-c:s', 'copy');
+        }
+      }
+    }
+
+    // Animated GIF / WebP output options
+    if (config.container === 'gif') {
+      args.push('-loop', String(Math.max(0, Math.round(config.animatedLoop))));
+    } else if (config.container === 'webp') {
+      args.push(
+        '-c:v',
+        'libwebp_anim',
+        '-lossless',
+        '0',
+        '-q:v',
+        String(clamp(Math.round(config.webpQuality || 75), 30, 95)),
+        '-loop',
+        String(Math.max(0, Math.round(config.animatedLoop))),
+        '-preset',
+        'default'
+      );
+    } else if (metadata.hasVideo) {
+      // Standard video codecs
       if (effectiveVideoCodec === 'copy') {
         args.push('-c:v', 'copy');
       } else if (effectiveVideoCodec === 'h264') {
@@ -436,7 +554,6 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
       }
     }
 
-    // 2-Pass flags
     if (passNumber === 1) {
       args.push('-pass', '1', '-passlogfile', 'ffmpeg2pass', '-an', '-f', 'null', '-');
       return args;
@@ -445,7 +562,6 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
       args.push('-pass', '2', '-passlogfile', 'ffmpeg2pass');
     }
 
-    // Audio encoder parameters
     if (hasAnyAudioOutput) {
       if (effectiveAudioCodec === 'copy') {
         args.push('-c:a', 'copy');
@@ -457,7 +573,6 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
         args.push('-c:a', 'libopus', '-b:a', `${audioBitrate}k`);
       }
 
-      // Label separate audio tracks in MP4/MKV
       if (graph.useFilterComplex && graph.audioOutPads.length > 1) {
         graph.audioOutPads.forEach((pad, idx) => {
           if (pad.title) {
@@ -474,8 +589,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
       args.push('-map_metadata', '-1', '-map_chapters', '-1');
     }
 
-    const outputVirtualName = `output.${containerSpec.extension}`;
-    args.push('-y', outputVirtualName);
+    args.push('-y', `output.${containerSpec.extension}`);
     return args;
   };
 
@@ -495,7 +609,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     : `ffmpeg ${replacePlaceholdersForPreview(finalArgs)}`;
 
   const compatWarnings = [...compat.warnings];
-  if (compat.videoCodec === 'copy' && !useVideoCopy) {
+  if (compat.videoCodec === 'copy' && !useVideoCopy && !isAnimatedImage) {
     compatWarnings.push('compat.copyOverriddenByFilter');
   }
   if (
@@ -509,6 +623,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
 
   return {
     inputs,
+    extraFiles,
     pass1Args,
     args: finalArgs,
     outputVirtualName: `output.${containerSpec.extension}`,
@@ -523,9 +638,6 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
   };
 }
 
-/**
- * Phase 1 互換ラッパー（単一ファイルテスト・簡易呼び出し用）
- */
 export function buildFFmpegCommand(
   inputVirtualPath: string,
   metadata: MediaMetadata,

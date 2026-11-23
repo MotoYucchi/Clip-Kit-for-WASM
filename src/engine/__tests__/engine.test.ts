@@ -422,3 +422,196 @@ describe('Phase 2: Multi-Clip, Multi-Track Audio, 2-Pass, CFR & HDR->SDR', () =>
     expect(vf).toContain('fps=30');
   });
 });
+
+describe('Phase 3: Effects, Overlays, Subtitles, Transitions, GIF/WebP, Denoise & ZIP', () => {
+  const dummyVideoFile = new File([], 'clip.mp4', { type: 'video/mp4' });
+  const dummyWmFile = new File([], 'logo.png', { type: 'image/png' });
+  const dummyTelopFile = new File([], 'telop_overlay.png', { type: 'image/png' });
+  const dummySrtFile = new File(['1\n00:00:00,000 --> 00:00:03,000\nHello\n'], 'subs.srt', {
+    type: 'text/plain',
+  });
+  const dummyFontFile = new File([], 'NotoSansJP.ttf', { type: 'font/ttf' });
+
+  const source1 = {
+    id: 'src-1',
+    file: dummyVideoFile,
+    objectUrl: '',
+    metadata: SAMPLE_VIDEO_META,
+    addedAt: 1,
+  };
+
+  it('applies deinterlace (yadif), video/audio denoise (hqdn3d/afftdn), eq color grading, and video fades', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        deinterlace: true,
+        videoDenoise: 'medium',
+        audioDenoise: 'light',
+        brightness: 0.12,
+        contrast: 1.2,
+        saturation: 1.3,
+        videoFadeInSec: 1.5,
+        videoFadeOutSec: 2,
+      },
+    });
+
+    const vf = plan.args[plan.args.indexOf('-vf') + 1];
+    const af = plan.args[plan.args.indexOf('-af') + 1];
+    expect(vf).toContain('yadif=');
+    expect(vf).toContain('hqdn3d=3:3:6:6');
+    expect(vf).toContain('eq=brightness=0.12:contrast=1.20:saturation=1.30');
+    expect(vf).toContain('fade=t=in:st=0:d=1.50');
+    expect(vf).toContain('fade=t=out:st=58.00:d=2.00');
+    expect(af).toContain('afftdn=nf=-25');
+  });
+
+  it('composites watermark image and timed text telop PNG overlay via filter_complex', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const defaults = createDefaultEditConfig();
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      watermarkFile: dummyWmFile,
+      telopPngFile: dummyTelopFile,
+      config: {
+        ...defaults,
+        watermark: { ...defaults.watermark, enabled: true, position: 'top-right', opacity: 0.7 },
+        textOverlay: {
+          ...defaults.textOverlay,
+          enabled: true,
+          text: '日本語テロップ',
+          useTimeRange: true,
+          startSec: 2,
+          endSec: 8,
+        },
+      },
+    });
+
+    expect(plan.inputs).toHaveLength(3);
+    const fc = plan.args[plan.args.indexOf('-filter_complex') + 1];
+    expect(fc).toContain('colorchannelmixer=aa=0.70[wm_img]');
+    expect(fc).toContain('overlay=W-w-20:20[v_wm]');
+    expect(fc).toContain("overlay=0:0:enable='between(t,2.00,8.00)'[v_txt]");
+  });
+
+  it('supports SRT subtitle burn-in with custom font virtual files and soft-sub embedding', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const burnPlan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      subtitleFile: dummySrtFile,
+      subtitleFontFile: dummyFontFile,
+      config: {
+        ...createDefaultEditConfig(),
+        subtitleHandling: 'burnIn',
+      },
+    });
+
+    expect(burnPlan.extraFiles).toHaveLength(2);
+    const vf = burnPlan.args[burnPlan.args.indexOf('-vf') + 1];
+    expect(vf).toContain("subtitles='subs.srt':fontsdir=/fonts");
+
+    const embedPlan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      subtitleFile: dummySrtFile,
+      config: {
+        ...createDefaultEditConfig(),
+        container: 'mp4',
+        subtitleHandling: 'embedExternal',
+      },
+    });
+
+    expect(embedPlan.args).toContain('-c:s');
+    expect(embedPlan.args).toContain('mov_text');
+  });
+
+  it('chains xfade and acrossfade for clip-to-clip crossfade transitions', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const clips: ClipSegment[] = [
+      { id: 'c1', sourceId: 'src-1', startSec: 0, endSec: 10 },
+      { id: 'c2', sourceId: 'src-1', startSec: 15, endSec: 25 },
+    ];
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips,
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        clipTransition: 'fade',
+        clipTransitionDurationSec: 1.0,
+      },
+    });
+
+    const fc = plan.args[plan.args.indexOf('-filter_complex') + 1];
+    expect(fc).toContain('xfade=transition=fade:duration=1.00:offset=9.000');
+    expect(fc).toContain('acrossfade=d=1.00');
+  });
+
+  it('builds high-quality GIF (palettegen/paletteuse) and Animated WebP (libwebp_anim) commands', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const gifPlan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        container: 'gif',
+        animatedFps: 15,
+        animatedWidth: 480,
+        animatedLoop: 0,
+      },
+    });
+
+    const gifFc = gifPlan.args[gifPlan.args.indexOf('-filter_complex') + 1];
+    expect(gifFc).toContain('palettegen=stats_mode=diff');
+    expect(gifFc).toContain('paletteuse=dither=bayer');
+    expect(gifPlan.args).toContain('-an');
+    expect(gifPlan.mimeType).toBe('image/gif');
+
+    const webpPlan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        container: 'webp',
+        animatedFps: 12,
+        animatedWidth: 480,
+        webpQuality: 80,
+      },
+    });
+
+    expect(webpPlan.args).toContain('libwebp_anim');
+    expect(webpPlan.args).toContain('-q:v');
+    expect(webpPlan.args).toContain('80');
+    expect(webpPlan.mimeType).toBe('image/webp');
+  });
+
+  it('builds valid PKZIP archives with UTF-8 filenames via zipBuilder', async () => {
+    const { buildZipBlob } = await import('../../utils/zipBuilder');
+    const zip = await buildZipBlob([
+      { name: 'テスト_動画.txt', data: new TextEncoder().encode('clipkit') },
+    ]);
+    const buf = new Uint8Array(await zip.arrayBuffer());
+    // PK\x03\x04 local header signature
+    expect(buf[0]).toBe(0x50);
+    expect(buf[1]).toBe(0x4b);
+    expect(buf[2]).toBe(0x03);
+    expect(buf[3]).toBe(0x04);
+  });
+});

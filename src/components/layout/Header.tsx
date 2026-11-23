@@ -1,5 +1,6 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { translate } from '../../i18n';
+import { pwaInstallService } from '../../services/pwaInstallService';
 import { useJobStore } from '../../store/useJobStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUiStore } from '../../store/useUiStore';
@@ -14,8 +15,26 @@ export function Header() {
     setUiMode,
     device,
     setShortcutsOpen,
+    setBatchModalOpen,
     showToast,
   } = useUiStore();
+  const [canInstallPwa, setCanInstallPwa] = useState(false);
+  const [isOffline, setIsOffline] = useState(
+    typeof navigator !== 'undefined' ? !navigator.onLine : false
+  );
+
+  useEffect(() => {
+    const unsub = pwaInstallService.subscribe(setCanInstallPwa);
+    const onOnline = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      unsub();
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
   const { wasmStatus, wasmMode } = useJobStore();
   const {
     source,
@@ -199,6 +218,28 @@ export function Header() {
                 {t('header.changeFile')}
               </button>
             </>
+          )}
+
+          {isOffline && (
+            <span className="pill pill-info">{t('header.offline')}</span>
+          )}
+
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => setBatchModalOpen(true)}
+          >
+            {t('header.batch')}
+          </button>
+
+          {canInstallPwa && (
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              onClick={() => void pwaInstallService.promptInstall()}
+            >
+              {t('header.installPwa')}
+            </button>
           )}
 
           {device.tier !== 'mobile' && (

@@ -58,6 +58,25 @@ export function estimateOutputSize(
     };
   }
 
+  if (config.container === 'gif' || config.container === 'webp') {
+    const { width, height } = graph.outputDimensions;
+    const fps = clamp(config.animatedFps || 12, 5, 24);
+    const bytesPerPixelFrame =
+      config.container === 'gif' ? 0.16 : 0.045 * (clamp(config.webpQuality || 75, 30, 95) / 75);
+    const estimatedBytes = Math.max(
+      4096,
+      Math.round(width * height * fps * outputDuration * bytesPerPixelFrame)
+    );
+    return {
+      estimatedBytes,
+      deltaPercent:
+        metadata.fileSize > 0
+          ? Math.round(((estimatedBytes - metadata.fileSize) / metadata.fileSize) * 100)
+          : null,
+      confidence: 'approximate',
+    };
+  }
+
   const activeTracks = audioTracks.filter((tr) => !tr.muted);
   const hasOverlay = activeTracks.length > 0;
   const isCopyMode =

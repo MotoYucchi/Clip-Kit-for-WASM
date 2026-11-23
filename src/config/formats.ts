@@ -10,6 +10,7 @@ export interface ContainerSpec {
   label: string;
   extension: string;
   mimeType: string;
+  isAnimatedImage?: boolean;
   allowedVideoCodecs: VideoCodec[];
   allowedAudioCodecs: AudioCodec[];
   defaultVideoCodec: VideoCodec;
@@ -54,6 +55,28 @@ export const CONTAINER_SPECS: Record<OutputContainer, ContainerSpec> = {
     mimeType: 'video/quicktime',
     allowedVideoCodecs: ['h264', 'h265', 'copy'],
     allowedAudioCodecs: ['aac', 'mp3', 'copy'],
+    defaultVideoCodec: 'h264',
+    defaultAudioCodec: 'aac',
+  },
+  gif: {
+    id: 'gif',
+    label: 'GIF アニメ (.gif)',
+    extension: 'gif',
+    mimeType: 'image/gif',
+    isAnimatedImage: true,
+    allowedVideoCodecs: ['h264'],
+    allowedAudioCodecs: ['aac'],
+    defaultVideoCodec: 'h264',
+    defaultAudioCodec: 'aac',
+  },
+  webp: {
+    id: 'webp',
+    label: 'アニメ WebP (.webp)',
+    extension: 'webp',
+    mimeType: 'image/webp',
+    isAnimatedImage: true,
+    allowedVideoCodecs: ['h264'],
+    allowedAudioCodecs: ['aac'],
     defaultVideoCodec: 'h264',
     defaultAudioCodec: 'aac',
   },
@@ -152,15 +175,21 @@ export interface CodecCompatResult {
   warnings: string[];
 }
 
-/**
- * コンテナと映像/音声コーデックの組み合わせが不正な場合に自動補正し、理由キーを返す。
- */
 export function resolveCodecCompatibility(
   container: OutputContainer,
   videoCodec: VideoCodec,
   audioCodec: AudioCodec
 ): CodecCompatResult {
   const spec = CONTAINER_SPECS[container];
+  if (spec.isAnimatedImage) {
+    return {
+      videoCodec: spec.defaultVideoCodec,
+      audioCodec: spec.defaultAudioCodec,
+      adjusted: false,
+      warnings: [],
+    };
+  }
+
   let resolvedVideo = videoCodec;
   let resolvedAudio = audioCodec;
   const warnings: string[] = [];

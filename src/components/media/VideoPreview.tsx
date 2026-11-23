@@ -8,8 +8,16 @@ import { clamp, formatTimecode } from '../../utils/formatters';
 
 export function VideoPreview() {
   const { lang } = useUiStore();
-  const { source, sources, clips, selectedClipId, config, updateConfig, updateTrimRange } =
-    useProjectStore();
+  const {
+    source,
+    sources,
+    clips,
+    selectedClipId,
+    watermarkPreviewUrl,
+    config,
+    updateConfig,
+    updateTrimRange,
+  } = useProjectStore();
   const { latestResult } = useJobStore();
   const {
     currentTime,
@@ -111,8 +119,32 @@ export function VideoPreview() {
   if (config.rotation !== 0) transformParts.push(`rotate(${config.rotation}deg)`);
   if (config.flipHorizontal) transformParts.push('scaleX(-1)');
   if (config.flipVertical) transformParts.push('scaleY(-1)');
-  const previewTransformStyle =
-    transformParts.length > 0 ? { transform: transformParts.join(' ') } : undefined;
+
+  const filterParts: string[] = [];
+  if (Math.abs(config.brightness) >= 0.01) {
+    filterParts.push(`brightness(${(1 + config.brightness).toFixed(2)})`);
+  }
+  if (Math.abs(config.contrast - 1) >= 0.01) {
+    filterParts.push(`contrast(${config.contrast.toFixed(2)})`);
+  }
+  if (Math.abs(config.saturation - 1) >= 0.01) {
+    filterParts.push(`saturate(${config.saturation.toFixed(2)})`);
+  }
+
+  const previewTransformStyle: React.CSSProperties | undefined =
+    transformParts.length > 0 || filterParts.length > 0
+      ? {
+          ...(transformParts.length > 0 ? { transform: transformParts.join(' ') } : {}),
+          ...(filterParts.length > 0 ? { filter: filterParts.join(' ') } : {}),
+        }
+      : undefined;
+
+  const isResultImage = Boolean(
+    latestResult &&
+      (latestResult.taskType === 'snapshot' ||
+        latestResult.mimeType === 'image/gif' ||
+        latestResult.mimeType === 'image/webp')
+  );
 
   const hasResult = Boolean(latestResult);
   const effectivePreviewMode = hasResult ? previewMode : 'original';
@@ -171,8 +203,8 @@ export function VideoPreview() {
             </div>
             <div className="compare-pane">
               <span className="pill pill-success">{t('preview.output')}</span>
-              {latestResult.taskType === 'snapshot' ? (
-                <img src={latestResult.objectUrl} alt="Exported snapshot" />
+              {isResultImage ? (
+                <img src={latestResult.objectUrl} alt="Exported media" />
               ) : latestResult.taskType === 'audio-extract' ? (
                 <audio src={latestResult.objectUrl} controls style={{ width: '100%' }} />
               ) : (
@@ -181,10 +213,10 @@ export function VideoPreview() {
             </div>
           </div>
         ) : effectivePreviewMode === 'output' && latestResult ? (
-          latestResult.taskType === 'snapshot' ? (
+          isResultImage ? (
             <img
               src={latestResult.objectUrl}
-              alt="Exported snapshot"
+              alt="Exported media"
               className="preview-video"
             />
           ) : latestResult.taskType === 'audio-extract' ? (
@@ -239,6 +271,56 @@ export function VideoPreview() {
                   pointerEvents: 'none',
                 }}
               />
+            )}
+            {config.watermark.enabled && watermarkPreviewUrl && (
+              <img
+                src={watermarkPreviewUrl}
+                alt=""
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  pointerEvents: 'none',
+                  width: `${config.watermark.scalePct}%`,
+                  opacity: config.watermark.opacity,
+                  ...(config.watermark.position === 'top-left'
+                    ? { top: 10, left: 10 }
+                    : config.watermark.position === 'top-right'
+                      ? { top: 10, right: 10 }
+                      : config.watermark.position === 'bottom-left'
+                        ? { bottom: 38, left: 10 }
+                        : config.watermark.position === 'center'
+                          ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
+                          : { bottom: 38, right: 10 }),
+                }}
+              />
+            )}
+            {config.textOverlay.enabled && config.textOverlay.text.trim() && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  maxWidth: '90%',
+                  textAlign: 'center',
+                  pointerEvents: 'none',
+                  padding: config.textOverlay.bgEnabled ? '4px 12px' : 0,
+                  borderRadius: 6,
+                  background: config.textOverlay.bgEnabled ? 'rgba(0,0,0,0.55)' : 'transparent',
+                  color: config.textOverlay.color,
+                  fontWeight: 700,
+                  fontSize: `${Math.max(12, Math.round(config.textOverlay.fontSize * 0.36))}px`,
+                  textShadow: `0 1px 3px ${config.textOverlay.outlineColor}`,
+                  whiteSpace: 'pre-wrap',
+                  ...(config.textOverlay.positionY === 'top'
+                    ? { top: '10%' }
+                    : config.textOverlay.positionY === 'center'
+                      ? { top: '46%' }
+                      : { bottom: '16%' }),
+                }}
+              >
+                {config.textOverlay.text}
+              </div>
             )}
           </div>
         )}

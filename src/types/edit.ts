@@ -1,4 +1,4 @@
-export type OutputContainer = 'mp4' | 'webm' | 'mkv' | 'mov';
+export type OutputContainer = 'mp4' | 'webm' | 'mkv' | 'mov' | 'gif' | 'webp';
 export type VideoCodec = 'h264' | 'h265' | 'vp9' | 'av1' | 'copy';
 export type AudioCodec = 'aac' | 'mp3' | 'opus' | 'copy';
 export type AudioExtractFormat = 'mp3' | 'm4a' | 'wav' | 'flac' | 'opus';
@@ -16,7 +16,15 @@ export type UseCasePresetId =
   | 'discord_10mb'
   | 'discord_25mb';
 
-export type ResolutionPreset = 'original' | '4k' | '1080p' | '720p' | '480p' | '360p' | 'scale' | 'custom';
+export type ResolutionPreset =
+  | 'original'
+  | '4k'
+  | '1080p'
+  | '720p'
+  | '480p'
+  | '360p'
+  | 'scale'
+  | 'custom';
 export type ScaleAlgorithm = 'bicubic' | 'lanczos';
 
 export type AspectPreset = 'original' | '16:9' | '9:16' | '1:1' | '4:3' | '21:9' | 'custom';
@@ -33,12 +41,24 @@ export type OriginalAudioHandling = 'keep' | 'replace' | 'mix';
 export type AudioTrackOutputMode = 'mix' | 'separate';
 export type FpsPreset = 'original' | '24' | '25' | '30' | '60' | 'custom';
 
+// Phase 3 types
+export type ClipTransitionType = 'none' | 'fade' | 'wipeleft' | 'slideleft' | 'dissolve';
+export type TextVerticalPosition = 'top' | 'center' | 'bottom';
+export type WatermarkPosition =
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'center';
+export type SubtitleHandlingMode = 'strip' | 'keep' | 'burnIn' | 'embedExternal';
+export type VideoDenoiseLevel = 'none' | 'light' | 'medium' | 'strong';
+export type AudioDenoiseLevel = 'none' | 'light' | 'strong';
+
 export interface ClipSegment {
   id: string;
   sourceId: string;
   startSec: number;
   endSec: number;
-  /** Optional clip-specific label for UI */
   label?: string;
 }
 
@@ -49,28 +69,46 @@ export interface AudioOverlayTrack {
   objectUrl: string;
   durationSec: number;
   isMicRecording: boolean;
-  /** Volume multiplier (0.0 to 2.0, 1.0 = 100%) */
   volume: number;
-  /** Start position on main timeline (seconds) */
   offsetSec: number;
-  /** Trim within this audio file */
   trimStartSec: number;
   trimEndSec: number;
   fadeInSec: number;
   fadeOutSec: number;
   loop: boolean;
   muted: boolean;
-  /** Normalized waveform peak bars (0..1) for timeline alignment */
   waveformPeaks: number[];
 }
 
 export interface CropConfig {
   enabled: boolean;
-  /** Crop rectangle in percentage (0–100) relative to oriented display frame */
   xPct: number;
   yPct: number;
   widthPct: number;
   heightPct: number;
+}
+
+export interface TextOverlayConfig {
+  enabled: boolean;
+  text: string;
+  fontSize: number; // px relative to 1080p height scale
+  color: string;
+  outlineColor: string;
+  bgEnabled: boolean;
+  bgColor: string;
+  bgOpacity: number; // 0..1
+  positionY: TextVerticalPosition;
+  useTimeRange: boolean;
+  startSec: number;
+  endSec: number;
+}
+
+export interface WatermarkConfig {
+  enabled: boolean;
+  position: WatermarkPosition;
+  scalePct: number; // 5..60% of output width
+  opacity: number; // 0.1..1.0
+  marginPx: number;
 }
 
 export interface EditConfig {
@@ -110,11 +148,11 @@ export interface EditConfig {
   customAspectH: number;
   aspectMode: AspectMode;
   letterboxColor: string;
-  blurStrength: number; // 5..40
+  blurStrength: number;
   blurBrightness: BlurBrightness;
 
   // Speed & Reverse
-  speed: number; // 0.25..4
+  speed: number;
   speedScope: SpeedScope;
   reverse: boolean;
 
@@ -132,32 +170,53 @@ export interface EditConfig {
 
   // Multi-track Audio Insertion (Phase 2)
   originalAudioHandling: OriginalAudioHandling;
-  originalAudioVolume: number; // 0..2
+  originalAudioVolume: number;
   audioOutputMode: AudioTrackOutputMode;
   enableLoudnorm: boolean;
 
-  // Frame Rate & Compatibility (Phase 2)
+  // Frame Rate & Compatibility (Phase 2 & 3)
   fpsPreset: FpsPreset;
   customFps: number;
   convertVfrToCfr: boolean;
   convertHdrToSdr: boolean;
+  deinterlace: boolean;
+  videoDenoise: VideoDenoiseLevel;
+  audioDenoise: AudioDenoiseLevel;
+
+  // Visual Effects, Overlays & Transitions (Phase 3)
+  videoFadeInSec: number;
+  videoFadeOutSec: number;
+  brightness: number; // -0.5..0.5 (default 0)
+  contrast: number; // 0.5..2.0 (default 1)
+  saturation: number; // 0..2.5 (default 1)
+  clipTransition: ClipTransitionType;
+  clipTransitionDurationSec: number;
+  textOverlay: TextOverlayConfig;
+  watermark: WatermarkConfig;
+  subtitleHandling: SubtitleHandlingMode;
+
+  // GIF / Animated WebP (Phase 3)
+  animatedFps: number; // 5..24
+  animatedWidth: number; // 0 = keep computed width, else max width px (e.g. 480)
+  animatedLoop: number; // 0 = infinite
+  webpQuality: number; // 40..95
 
   // Audio extraction
   audioExtractFormat: AudioExtractFormat;
-  audioExtractTrackIndex: number; // audio-relative index 0..N-1
+  audioExtractTrackIndex: number;
   audioExtractBitrateKbps: number;
 
   // Snapshot export
   snapshotFormat: SnapshotFormat;
   snapshotTimeSec: number;
-  snapshotQuality: number; // JPEG 2..15 (lower is better in FFmpeg -q:v)
+  snapshotQuality: number;
 
   // Privacy / Metadata
   stripMetadata: boolean;
 }
 
 export interface ProjectJsonExport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   app: 'Clip-Kit-for-WASM';
   exportedAt: string;
   config: EditConfig;

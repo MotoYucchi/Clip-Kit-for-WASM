@@ -1,7 +1,7 @@
 {
   "name": "WASM Clip Kit — 動画加工スタジオ",
   "short_name": "Clip Kit",
-  "description": "ブラウザ上で完結する多機能動画加工ツール（FFmpeg.wasm・サーバー送信なし）",
+  "description": "ブラウザ上で完結する多機能動画加工ツール（FFmpeg.wasm・サーバー送信なし・オフライン対応）",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -9,12 +9,19 @@
   "background_color": "#0d0f12",
   "theme_color": "#0d0f12",
   "lang": "ja",
+  "categories": ["multimedia", "utilities", "video"],
   "icons": [
     {
       "src": "./icons/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }

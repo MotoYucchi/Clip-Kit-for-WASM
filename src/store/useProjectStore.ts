@@ -30,6 +30,10 @@ interface ProjectState {
   clips: ClipSegment[];
   selectedClipId: string | null;
   audioTracks: AudioOverlayTrack[];
+  watermarkFile: File | null;
+  watermarkPreviewUrl: string | null;
+  subtitleFile: File | null;
+  subtitleFontFile: File | null;
   config: EditConfig;
   isProbing: boolean;
   compatNoticeKeys: string[];
@@ -43,6 +47,11 @@ interface ProjectState {
   setPrimaryWaveformPeaks: (peaks: number[]) => void;
   setProbing: (probing: boolean) => void;
   clearSource: () => void;
+
+  // Phase 3 overlay & subtitle files
+  setWatermarkFile: (file: File | null) => void;
+  setSubtitleFile: (file: File | null) => void;
+  setSubtitleFontFile: (file: File | null) => void;
 
   // Clip editing (single & multi-clip)
   selectClip: (clipId: string) => void;
@@ -109,6 +118,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   clips: [],
   selectedClipId: null,
   audioTracks: [],
+  watermarkFile: null,
+  watermarkPreviewUrl: null,
+  subtitleFile: null,
+  subtitleFontFile: null,
   config: createDefaultEditConfig(),
   isProbing: false,
   compatNoticeKeys: [],
@@ -373,12 +386,52 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       };
     }),
 
+  setWatermarkFile: (file) => {
+    const prevUrl = get().watermarkPreviewUrl;
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
+    if (!file) {
+      set((state) => ({
+        watermarkFile: null,
+        watermarkPreviewUrl: null,
+        config: { ...state.config, watermark: { ...state.config.watermark, enabled: false } },
+      }));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    set((state) => ({
+      watermarkFile: file,
+      watermarkPreviewUrl: url,
+      config: { ...state.config, watermark: { ...state.config.watermark, enabled: true } },
+    }));
+  },
+
+  setSubtitleFile: (file) =>
+    set((state) => ({
+      subtitleFile: file,
+      config: {
+        ...state.config,
+        subtitleHandling: file
+          ? state.config.subtitleHandling === 'strip' || state.config.subtitleHandling === 'keep'
+            ? 'embedExternal'
+            : state.config.subtitleHandling
+          : 'strip',
+      },
+    })),
+
+  setSubtitleFontFile: (subtitleFontFile) => set({ subtitleFontFile }),
+
   updateConfig: (patch) => {
     const { source, clips, config, past } = get();
     const merged: EditConfig = {
       ...config,
       ...patch,
       crop: patch.crop ? { ...config.crop, ...patch.crop } : config.crop,
+      textOverlay: patch.textOverlay
+        ? { ...config.textOverlay, ...patch.textOverlay }
+        : config.textOverlay,
+      watermark: patch.watermark
+        ? { ...config.watermark, ...patch.watermark }
+        : config.watermark,
     };
 
     const compat = resolveCodecCompatibility(
@@ -458,7 +511,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   exportProjectJson: () => {
     const { sources, clips, audioTracks, config } = get();
     const payload: ProjectJsonExport = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       app: 'Clip-Kit-for-WASM',
       exportedAt: new Date().toISOString(),
       config,
@@ -497,6 +550,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ...defaults,
         ...parsed.config,
         crop: { ...defaults.crop, ...(parsed.config.crop || {}) },
+        textOverlay: { ...defaults.textOverlay, ...(parsed.config.textOverlay || {}) },
+        watermark: { ...defaults.watermark, ...(parsed.config.watermark || {}) },
       };
 
       const { source, clips, config, past } = get();
@@ -536,6 +591,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       crop: {
         ...defaults.crop,
         ...(pendingRecovery.config.crop || {}),
+      },
+      textOverlay: {
+        ...defaults.textOverlay,
+        ...(pendingRecovery.config.textOverlay || {}),
+      },
+      watermark: {
+        ...defaults.watermark,
+        ...(pendingRecovery.config.watermark || {}),
       },
     };
 

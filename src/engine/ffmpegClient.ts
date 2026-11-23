@@ -226,6 +226,17 @@ class FFmpegClient {
     this.emitStatus('running');
 
     const { pathMap, cleanup } = await this.mountInputFiles(ffmpeg, plan.inputs);
+    const extraCleanups: string[] = [];
+    for (const extra of plan.extraFiles || []) {
+      const lastSlash = extra.virtualPath.lastIndexOf('/');
+      if (lastSlash > 0) {
+        const dir = extra.virtualPath.slice(0, lastSlash);
+        await ffmpeg.createDir(dir).catch(() => undefined);
+      }
+      await ffmpeg.writeFile(extra.virtualPath, await fetchFile(extra.file));
+      extraCleanups.push(extra.virtualPath);
+    }
+
     const resolveArgs = (rawArgs: string[]) =>
       rawArgs.map((arg) => pathMap.get(arg) ?? arg);
 
@@ -257,7 +268,6 @@ class FFmpegClient {
     };
 
     try {
-      // Pass 1 (if 2-pass enabled)
       if (plan.pass1Args) {
         onLog?.('--- [Pass 1 / 2] Analyzing bitrate distribution ---');
         bindProgressRange(0, 45);
@@ -273,7 +283,6 @@ class FFmpegClient {
         bindProgressRange(0, 99);
       }
 
-      // Main / Pass 2
       const exitCode = await ffmpeg.exec(resolveArgs(plan.args));
       if (this.cancelled) {
         throw new Error('CANCELLED');
@@ -298,6 +307,9 @@ class FFmpegClient {
       this.activeProgressHandler = null;
       if (!this.cancelled && this.ffmpeg?.loaded) {
         await ffmpeg.deleteFile(plan.outputVirtualName).catch(() => undefined);
+        for (const p of extraCleanups) {
+          await ffmpeg.deleteFile(p).catch(() => undefined);
+        }
         if (hasTwoPass) {
           await ffmpeg.deleteFile('ffmpeg2pass-0.log').catch(() => undefined);
           await ffmpeg.deleteFile('ffmpeg2pass-0.log.mbtree').catch(() => undefined);
