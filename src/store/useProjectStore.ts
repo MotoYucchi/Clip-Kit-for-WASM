@@ -7,11 +7,13 @@ import {
   saveRecoverySnapshot,
   type RecoverySnapshot,
 } from '../services/recoveryService';
+import { buildSrtContent } from '../services/autoSubtitleService';
 import type {
   AudioOverlayTrack,
   ClipSegment,
   EditConfig,
   ProjectJsonExport,
+  SubtitleCue,
 } from '../types/edit';
 import type { MediaMetadata, MediaSourceItem } from '../types/media';
 import { clamp } from '../utils/formatters';
@@ -32,8 +34,12 @@ interface ProjectState {
   audioTracks: AudioOverlayTrack[];
   watermarkFile: File | null;
   watermarkPreviewUrl: string | null;
+  pipFile: File | null;
+  pipPreviewUrl: string | null;
+  pipHasAudio: boolean;
   subtitleFile: File | null;
   subtitleFontFile: File | null;
+  subtitleCues: SubtitleCue[];
   config: EditConfig;
   isProbing: boolean;
   compatNoticeKeys: string[];
@@ -48,10 +54,16 @@ interface ProjectState {
   setProbing: (probing: boolean) => void;
   clearSource: () => void;
 
-  // Phase 3 overlay & subtitle files
+  // Phase 3 & 4 overlay, PiP & subtitle files/cues
   setWatermarkFile: (file: File | null) => void;
+  setPipFile: (file: File | null, hasAudio?: boolean) => void;
   setSubtitleFile: (file: File | null) => void;
   setSubtitleFontFile: (file: File | null) => void;
+  setSubtitleCues: (cues: SubtitleCue[]) => void;
+  addSubtitleCue: (cue: SubtitleCue) => void;
+  updateSubtitleCue: (id: string, patch: Partial<SubtitleCue>) => void;
+  removeSubtitleCue: (id: string) => void;
+  applyCuesToSubtitleFile: (mode?: 'embedExternal' | 'burnIn') => File | null;
 
   // Clip editing (single & multi-clip)
   selectClip: (clipId: string) => void;
@@ -120,8 +132,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   audioTracks: [],
   watermarkFile: null,
   watermarkPreviewUrl: null,
+  pipFile: null,
+  pipPreviewUrl: null,
+  pipHasAudio: false,
   subtitleFile: null,
   subtitleFontFile: null,
+  subtitleCues: [],
   config: createDefaultEditConfig(),
   isProbing: false,
   compatNoticeKeys: [],
@@ -405,6 +421,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }));
   },
 
+  setPipFile: (file, hasAudio = true) => {
+    const prevUrl = get().pipPreviewUrl;
+    if (prevUrl) URL.revokeObjectURL(prevUrl);
+    if (!file) {
+      set((state) => ({
+        pipFile: null,
+        pipPreviewUrl: null,
+        pipHasAudio: false,
+        config: { ...state.config, pip: { ...state.config.pip, enabled: false } },
+      }));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    set((state) => ({
+      pipFile: file,
+      pipPreviewUrl: url,
+      pipHasAudio: hasAudio,
+      config: { ...state.config, pip: { ...state.config.pip, enabled: true } },
+    }));
+  },
+
   setSubtitleFile: (file) =>
     set((state) => ({
       subtitleFile: file,
@@ -420,6 +457,35 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   setSubtitleFontFile: (subtitleFontFile) => set({ subtitleFontFile }),
 
+  setSubtitleCues: (subtitleCues) => set({ subtitleCues }),
+
+  addSubtitleCue: (cue) =>
+    set((state) => ({
+      subtitleCues: [...state.subtitleCues, cue].sort((a, b) => a.startSec - b.startSec),
+    })),
+
+  updateSubtitleCue: (id, patch) =>
+    set((state) => ({
+      subtitleCues: state.subtitleCues.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+    })),
+
+  removeSubtitleCue: (id) =>
+    set((state) => ({
+      subtitleCues: state.subtitleCues.filter((c) => c.id !== id),
+    })),
+
+  applyCuesToSubtitleFile: (mode = 'embedExternal') => {
+    const { subtitleCues } = get();
+    if (subtitleCues.length === 0) return null;
+    const srtText = buildSrtContent(subtitleCues);
+    const srtFile = new File([srtText], 'auto_subtitles.srt', { type: 'text/plain;charset=utf-8' });
+    set((state) => ({
+      subtitleFile: srtFile,
+      config: { ...state.config, subtitleHandling: mode },
+    }));
+    return srtFile;
+  },
+
   updateConfig: (patch) => {
     const { source, clips, config, past } = get();
     const merged: EditConfig = {
@@ -432,6 +498,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       watermark: patch.watermark
         ? { ...config.watermark, ...patch.watermark }
         : config.watermark,
+      pip: patch.pip ? { ...config.pip, ...patch.pip } : config.pip,
     };
 
     const compat = resolveCodecCompatibility(
@@ -552,6 +619,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         crop: { ...defaults.crop, ...(parsed.config.crop || {}) },
         textOverlay: { ...defaults.textOverlay, ...(parsed.config.textOverlay || {}) },
         watermark: { ...defaults.watermark, ...(parsed.config.watermark || {}) },
+        pip: { ...defaults.pip, ...(parsed.config.pip || {}) },
       };
 
       const { source, clips, config, past } = get();
@@ -599,6 +667,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       watermark: {
         ...defaults.watermark,
         ...(pendingRecovery.config.watermark || {}),
+      },
+      pip: {
+        ...defaults.pip,
+        ...(pendingRecovery.config.pip || {}),
       },
     };
 

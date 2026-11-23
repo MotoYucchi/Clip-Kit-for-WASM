@@ -23,6 +23,8 @@ export function detectDeviceProfile(): DeviceProfile {
       supportsWebShareFiles: false,
       supportsWakeLock: false,
       supportsMediaRecorder: false,
+      supportsWebCodecs: false,
+      supportsSpeechRecognition: false,
       screenShortSide: 1080,
     };
   }
@@ -68,6 +70,13 @@ export function detectDeviceProfile(): DeviceProfile {
     typeof nav.share === 'function' && typeof nav.canShare === 'function';
   const supportsWakeLock = 'wakeLock' in nav;
   const supportsMediaRecorder = typeof window.MediaRecorder !== 'undefined';
+  const supportsWebCodecs =
+    typeof (window as unknown as { VideoEncoder?: unknown }).VideoEncoder === 'function' &&
+    typeof (window as unknown as { VideoFrame?: unknown }).VideoFrame === 'function';
+  const supportsSpeechRecognition =
+    typeof (window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition === 'function' ||
+    typeof (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition ===
+      'function';
 
   return {
     tier,
@@ -82,6 +91,8 @@ export function detectDeviceProfile(): DeviceProfile {
     supportsWebShareFiles,
     supportsWakeLock,
     supportsMediaRecorder,
+    supportsWebCodecs,
+    supportsSpeechRecognition,
     screenShortSide,
   };
 }

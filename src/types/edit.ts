@@ -54,6 +54,29 @@ export type SubtitleHandlingMode = 'strip' | 'keep' | 'burnIn' | 'embedExternal'
 export type VideoDenoiseLevel = 'none' | 'light' | 'medium' | 'strong';
 export type AudioDenoiseLevel = 'none' | 'light' | 'strong';
 
+// Phase 4 types
+export type StabilizeLevel = 'none' | 'light' | 'medium' | 'strong';
+export type StabilizeEdgeMode = 'mirror' | 'original' | 'blank';
+export type PipAudioMode = 'mute' | 'mix';
+
+export interface PipConfig {
+  enabled: boolean;
+  position: WatermarkPosition;
+  scalePct: number; // 15..55% of main output width
+  opacity: number; // 0.2..1.0
+  marginPx: number;
+  offsetSec: number;
+  borderEnabled: boolean;
+  audioMode: PipAudioMode;
+}
+
+export interface SubtitleCue {
+  id: string;
+  startSec: number;
+  endSec: number;
+  text: string;
+}
+
 export interface ClipSegment {
   id: string;
   sourceId: string;
@@ -182,6 +205,12 @@ export interface EditConfig {
   deinterlace: boolean;
   videoDenoise: VideoDenoiseLevel;
   audioDenoise: AudioDenoiseLevel;
+
+  // Phase 4: Hardware Acceleration, Stabilization & Picture-in-Picture
+  useWebCodecsHw: boolean;
+  stabilizeLevel: StabilizeLevel;
+  stabilizeEdgeMode: StabilizeEdgeMode;
+  pip: PipConfig;
 
   // Visual Effects, Overlays & Transitions (Phase 3)
   videoFadeInSec: number;

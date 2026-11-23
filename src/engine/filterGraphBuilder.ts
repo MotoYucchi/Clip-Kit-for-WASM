@@ -156,9 +156,9 @@ export function computeOutputDimensions(
   return { width: makeEven(w), height: makeEven(h) };
 }
 
-function getWatermarkOverlayPosition(config: EditConfig): string {
-  const m = Math.round(clamp(config.watermark.marginPx, 0, 200));
-  switch (config.watermark.position) {
+function getCornerOverlayPosition(position: EditConfig['watermark']['position'], marginPx: number): string {
+  const m = Math.round(clamp(marginPx, 0, 200));
+  switch (position) {
     case 'top-left':
       return `${m}:${m}`;
     case 'top-right':
@@ -173,6 +173,18 @@ function getWatermarkOverlayPosition(config: EditConfig): string {
   }
 }
 
+export function buildStabilizeFilter(config: EditConfig): string | null {
+  if (config.stabilizeLevel === 'none') return null;
+  const edge = config.stabilizeEdgeMode || 'mirror';
+  if (config.stabilizeLevel === 'light') {
+    return `deshake=rx=16:ry=16:edge=${edge}:blocksize=8`;
+  }
+  if (config.stabilizeLevel === 'medium') {
+    return `deshake=rx=32:ry=32:edge=${edge}:blocksize=8:contrast=125`;
+  }
+  return `deshake=rx=48:ry=48:edge=${edge}:blocksize=8:contrast=150`;
+}
+
 export interface MultiInputGraphOptions {
   primaryMetadata: MediaMetadata;
   sources?: MediaSourceItem[];
@@ -184,6 +196,8 @@ export interface MultiInputGraphOptions {
   audioTrackStartInputIndex?: number;
   watermarkInputIndex?: number | null;
   telopInputIndex?: number | null;
+  pipInputIndex?: number | null;
+  pipHasAudio?: boolean;
   burnInSubtitleVirtualPath?: string | null;
   hasSubtitleFont?: boolean;
 }
@@ -200,6 +214,8 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     audioTrackStartInputIndex = 1,
     watermarkInputIndex = null,
     telopInputIndex = null,
+    pipInputIndex = null,
+    pipHasAudio = false,
     burnInSubtitleVirtualPath = null,
     hasSubtitleFont = false,
   } = opts;
@@ -264,6 +280,11 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
   if (primaryMetadata.hasVideo) {
     if (config.deinterlace) {
       preAspectFilters.push('yadif=mode=0:parity=-1:deint=0');
+    }
+
+    const stabFilter = buildStabilizeFilter(config);
+    if (stabFilter) {
+      preAspectFilters.push(stabFilter);
     }
 
     if (config.videoDenoise === 'light') {
@@ -396,12 +417,16 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     config.speedScope === 'selectedClip' &&
     Math.abs(config.speed - 1) >= 0.001;
   const hasVisualOverlayInput =
-    primaryMetadata.hasVideo && (watermarkInputIndex !== null || telopInputIndex !== null);
+    primaryMetadata.hasVideo &&
+    (watermarkInputIndex !== null || telopInputIndex !== null || pipInputIndex !== null);
   const needsGifPaletteComplex = primaryMetadata.hasVideo && config.container === 'gif';
+  const hasPipAudioMix =
+    !isAnimatedImage && pipInputIndex !== null && pipHasAudio && config.pip.enabled && config.pip.audioMode === 'mix';
 
   const useFilterComplex =
     isMultiClip ||
     hasOverlayAudio ||
+    hasPipAudioMix ||
     needsBlurComplex ||
     needsSelectedClipSpeedComplex ||
     hasVisualOverlayInput ||
@@ -617,11 +642,33 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
       }
     }
 
+    // 2.0 Picture-in-Picture (PiP) Video Overlay
+    if (pipInputIndex !== null && config.pip.enabled) {
+      const pipW = Math.max(48, makeEven((outW * clamp(config.pip.scalePct, 15, 55)) / 100));
+      const pipSteps: string[] = [`scale=${pipW}:-2:flags=lanczos`];
+      if (config.pip.borderEnabled) {
+        pipSteps.push('pad=iw+6:ih+6:3:3:color=0xffffff');
+      }
+      if (config.pip.opacity < 0.99) {
+        pipSteps.push(`format=rgba`, `colorchannelmixer=aa=${clamp(config.pip.opacity, 0.2, 1).toFixed(2)}`);
+      }
+      const offsetSec = Math.max(0, config.pip.offsetSec);
+      pipSteps.push(`setpts=PTS-STARTPTS+${offsetSec.toFixed(2)}/TB`);
+      graphSegments.push(`[${pipInputIndex}:v]${pipSteps.join(',')}[pip_v]`);
+
+      const pipPos = getCornerOverlayPosition(config.pip.position, config.pip.marginPx);
+      const enableExpr = offsetSec > 0.01 ? `:enable='gte(t,${offsetSec.toFixed(2)})'` : '';
+      graphSegments.push(
+        `${currentVideoLabel}[pip_v]overlay=${pipPos}:eof_action=pass:shortest=0${enableExpr}[v_pip]`
+      );
+      currentVideoLabel = '[v_pip]';
+    }
+
     // 2a. Image Watermark Overlay
     if (watermarkInputIndex !== null && config.watermark.enabled) {
       const wmW = Math.max(16, makeEven((outW * clamp(config.watermark.scalePct, 5, 60)) / 100));
       const wmAlpha = clamp(config.watermark.opacity, 0.1, 1).toFixed(2);
-      const wmPos = getWatermarkOverlayPosition(config);
+      const wmPos = getCornerOverlayPosition(config.watermark.position, config.watermark.marginPx);
       graphSegments.push(
         `[${watermarkInputIndex}:v]scale=${wmW}:-1:flags=lanczos,format=rgba,colorchannelmixer=aa=${wmAlpha}[wm_img]`
       );
@@ -651,17 +698,27 @@ export function buildFullFilterGraph(opts: MultiInputGraphOptions): FilterGraphP
     }
   }
 
-  // 3. Audio Processing & Multi-Track Mixing / Separate Tracks
+  // 3. Audio Processing & Multi-Track Mixing / Separate Tracks / PiP Audio
   const audioOutPads: AudioOutputPad[] = [];
 
   if (!isAnimatedImage) {
-    if (hasOverlayAudio) {
+    if (hasOverlayAudio || hasPipAudioMix) {
       const preparedPads: AudioOutputPad[] = [];
 
       if (keepOriginalAudio) {
         const origSteps = ['aresample=48000', 'aformat=channel_layouts=stereo', ...origAudioFilters];
         graphSegments.push(`${currentOrigAudioLabel}${origSteps.join(',')}[orig_a]`);
         preparedPads.push({ label: '[orig_a]', title: 'Original Audio' });
+      }
+
+      if (hasPipAudioMix && pipInputIndex !== null) {
+        const pipAudioSteps = ['aresample=48000', 'aformat=channel_layouts=stereo'];
+        if (config.pip.offsetSec > 0.01) {
+          const delayMs = Math.round(config.pip.offsetSec * 1000);
+          pipAudioSteps.push(`adelay=${delayMs}|${delayMs}`);
+        }
+        graphSegments.push(`[${pipInputIndex}:a]${pipAudioSteps.join(',')}[pip_a]`);
+        preparedPads.push({ label: '[pip_a]', title: 'PiP Audio' });
       }
 
       activeAudioTracks.forEach((track, idx) => {

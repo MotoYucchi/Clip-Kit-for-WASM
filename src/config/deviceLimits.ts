@@ -36,7 +36,7 @@ export const DEVICE_LIMITS: Record<DeviceTier, DeviceTierLimits> = {
     recommendedMaxHeight: 1080,
     maxReverseDurationSec: 20,
     disabledFeatures: ['export_4k', 'two_pass', 'codec_av1', 'codec_h265', 'multi_track_audio_heavy'],
-    warnFeatures: ['reverse_long_video', 'blur_background'],
+    warnFeatures: ['reverse_long_video', 'blur_background', 'stabilize_video'],
   },
 };
 

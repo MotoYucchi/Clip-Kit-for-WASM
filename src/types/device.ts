@@ -7,7 +7,8 @@ export type FeatureId =
   | 'codec_h265'
   | 'multi_track_audio_heavy'
   | 'reverse_long_video'
-  | 'blur_background';
+  | 'blur_background'
+  | 'stabilize_video';
 
 export type CapabilityStatus = 'supported' | 'warn' | 'disabled';
 
@@ -29,6 +30,8 @@ export interface DeviceProfile {
   supportsWebShareFiles: boolean;
   supportsWakeLock: boolean;
   supportsMediaRecorder: boolean;
+  supportsWebCodecs: boolean;
+  supportsSpeechRecognition: boolean;
   screenShortSide: number;
 }
 

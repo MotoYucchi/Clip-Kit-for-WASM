@@ -74,6 +74,8 @@ export interface BuildCommandOptions {
   config: EditConfig;
   watermarkFile?: File | null;
   telopPngFile?: File | null;
+  pipFile?: File | null;
+  pipHasAudio?: boolean;
   subtitleFile?: File | null;
   subtitleFontFile?: File | null;
 }
@@ -88,6 +90,8 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     config,
     watermarkFile = null,
     telopPngFile = null,
+    pipFile = null,
+    pipHasAudio = false,
     subtitleFile = null,
     subtitleFontFile = null,
   } = opts;
@@ -270,6 +274,12 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     inputs.push({ placeholder: `__IN_${idx}__`, file: track.file });
   }
 
+  let pipInputIndex: number | null = null;
+  if (metadata.hasVideo && config.pip.enabled && pipFile) {
+    pipInputIndex = inputs.length;
+    inputs.push({ placeholder: `__IN_${pipInputIndex}__`, file: pipFile });
+  }
+
   let watermarkInputIndex: number | null = null;
   if (metadata.hasVideo && config.watermark.enabled && watermarkFile) {
     watermarkInputIndex = inputs.length;
@@ -312,6 +322,8 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     audioTrackStartInputIndex,
     watermarkInputIndex,
     telopInputIndex,
+    pipInputIndex,
+    pipHasAudio,
     burnInSubtitleVirtualPath,
     hasSubtitleFont,
   });

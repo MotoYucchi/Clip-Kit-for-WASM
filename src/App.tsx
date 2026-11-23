@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { ExportPanel } from './components/controls/ExportPanel';
 import { QuickWizard } from './components/controls/QuickWizard';
 import { SettingsPanels } from './components/controls/SettingsPanels';
@@ -19,6 +19,10 @@ import { translate } from './i18n';
 import { renderTextOverlayToPngFile } from './services/textOverlayRenderer';
 import { wakeLockService } from './services/wakeLockService';
 import { extractWaveformPeaks } from './services/waveformService';
+import {
+  evaluateWebCodecsEligibility,
+  runWebCodecsHybridEncode,
+} from './services/webCodecsService';
 import { useJobStore } from './store/useJobStore';
 import { usePlaybackStore } from './store/usePlaybackStore';
 import { useProjectStore } from './store/useProjectStore';
@@ -27,6 +31,7 @@ import { useUiStore } from './store/useUiStore';
 export function App() {
   const {
     lang,
+    device,
     uiMode,
     mobileSheetOpen,
     setMobileSheetOpen,
@@ -43,6 +48,8 @@ export function App() {
     selectedClipId,
     audioTracks,
     watermarkFile,
+    pipFile,
+    pipHasAudio,
     subtitleFile,
     subtitleFontFile,
     config,
@@ -55,6 +62,8 @@ export function App() {
     restoreRecovery,
     dismissRecovery,
   } = useProjectStore();
+
+  const hwAbortRef = useRef<AbortController | null>(null);
 
   const {
     wasmStatus,
@@ -223,22 +232,80 @@ export function App() {
       outDims.height || source.metadata.height || 720
     );
 
-    const plan = buildFullFFmpegCommand({
-      primarySource: source,
-      sources,
-      clips,
-      selectedClipId,
-      audioTracks,
-      config,
-      watermarkFile,
-      telopPngFile,
-      subtitleFile,
-      subtitleFontFile,
-    });
     const wakeLocked = await wakeLockService.acquire();
     startJob(wakeLocked);
 
+    const hwCheck =
+      config.useWebCodecsHw &&
+      evaluateWebCodecsEligibility(
+        source.metadata,
+        config,
+        clips,
+        audioTracks,
+        device.supportsWebCodecs
+      ).eligible;
+
     try {
+      // Optional Phase 4 WebCodecs Hybrid Hardware Fast Path
+      if (hwCheck) {
+        const ac = new AbortController();
+        hwAbortRef.current = ac;
+        setWasmState('running', ffmpegClient.getMode());
+        try {
+          const hwRes = await runWebCodecsHybridEncode({
+            source,
+            clip: clips[0],
+            config,
+            watermarkFile,
+            telopPngFile,
+            signal: ac.signal,
+            onProgress: (pct, elapsed, eta) => updateProgress(pct, elapsed, eta),
+            onLog: (line) => appendLog(line),
+          });
+          hwAbortRef.current = null;
+          setWasmState('ready', ffmpegClient.getMode());
+          const objectUrl = URL.createObjectURL(hwRes.blob);
+          completeJob({
+            id: `res-${Date.now()}`,
+            fileName: hwRes.fileName,
+            mimeType: hwRes.mimeType,
+            size: hwRes.blob.size,
+            blob: hwRes.blob,
+            objectUrl,
+            createdAt: Date.now(),
+            elapsedMs: hwRes.elapsedMs,
+            commandPreview: hwRes.commandPreview,
+            taskType: config.taskType,
+          });
+          setPreviewMode('output');
+          showToast(`${t('export.resultReady')} (WebCodecs HW): ${hwRes.fileName}`);
+          return;
+        } catch (hwErr) {
+          hwAbortRef.current = null;
+          if (hwErr instanceof Error && hwErr.message === 'CANCELLED') {
+            throw hwErr;
+          }
+          appendLog(
+            `[WebCodecs HW] Fallback to FFmpeg.wasm: ${hwErr instanceof Error ? hwErr.message : String(hwErr)}`
+          );
+        }
+      }
+
+      const plan = buildFullFFmpegCommand({
+        primarySource: source,
+        sources,
+        clips,
+        selectedClipId,
+        audioTracks,
+        config,
+        watermarkFile,
+        telopPngFile,
+        pipFile,
+        pipHasAudio,
+        subtitleFile,
+        subtitleFontFile,
+      });
+
       const { blob, elapsedMs } = await ffmpegClient.runCommand({
         plan,
         onProgress: (pct, elapsed, eta) => updateProgress(pct, elapsed, eta),
@@ -268,11 +335,14 @@ export function App() {
         failJob(err instanceof Error ? err.message : String(err));
       }
     } finally {
+      hwAbortRef.current = null;
       await wakeLockService.release();
     }
   };
 
   const handleCancel = async () => {
+    hwAbortRef.current?.abort();
+    hwAbortRef.current = null;
     ffmpegClient.cancelActiveJob();
     await wakeLockService.release();
     showToast(t('progress.cancel'));

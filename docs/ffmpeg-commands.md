@@ -180,3 +180,30 @@ ffmpeg -i clip1.mp4 -i clip2.mp4 \
     -vf "scale=480:-2:flags=lanczos,fps=12" -an \
     -c:v libwebp_anim -lossless 0 -q:v 75 -loop 0 -preset default -y output.webp
   ```
+
+---
+
+## Phase 4 追加コマンド一覧
+
+## 20. 手ブレ補正（`deshake` ミラー補完）
+```bash
+ffmpeg -i handheld.mp4 \
+  -vf "deshake=rx=32:ry=32:edge=mirror:blocksize=8:contrast=125" \
+  -c:v libx264 -crf 23 -c:a aac -b:a 128k -y output.mp4
+```
+
+## 21. ピクチャ・イン・ピクチャ（子画面動画合成 + 音声ミックス）
+```bash
+ffmpeg -i main.mp4 -i pip_camera.mp4 \
+  -filter_complex "[1:v]scale=360:-2:flags=lanczos,pad=iw+6:ih+6:3:3:color=0xffffff,setpts=PTS-STARTPTS+3.50/TB[pip_v];[0:v][pip_v]overlay=W-w-20:H-h-20:eof_action=pass:shortest=0:enable='gte(t,3.50)'[v_pip];[0:a]aresample=48000,aformat=channel_layouts=stereo[orig_a];[1:a]aresample=48000,aformat=channel_layouts=stereo,adelay=3500|3500[pip_a];[orig_a][pip_a]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]" \
+  -map "[v_pip]" -map "[aout]" -c:v libx264 -crf 23 -c:a aac -b:a 128k -y output.mp4
+```
+
+## 22. WebCodecs ハードウェア高速エンコード併用（無劣化リマックス段）
+```bash
+# 1) ブラウザ GPU (VideoEncoder: avc1.640028, format: annexb) で webcodecs_hw.h264 を高速生成
+# 2) FFmpeg.wasm で映像を再エンコードせず音声と無劣化リマックス
+ffmpeg -r 30 -i webcodecs_hw.h264 -i source.mp4 \
+  -map 0:v:0 -map 1:a:0? -c:v copy -c:a aac -b:a 128k \
+  -movflags +faststart -map_metadata -1 -y output_hw.mp4
+```

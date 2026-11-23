@@ -12,6 +12,7 @@ export type ControlTab =
   | 'speed'
   | 'transform'
   | 'effects'
+  | 'autosub'
   | 'audio'
   | 'multitrack'
   | 'compat'

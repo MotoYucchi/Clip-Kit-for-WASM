@@ -240,6 +240,8 @@ describe('sizeEstimator & deviceLimits', () => {
       supportsWebShareFiles: true,
       supportsWakeLock: true,
       supportsMediaRecorder: true,
+      supportsWebCodecs: true,
+      supportsSpeechRecognition: true,
       screenShortSide: 390,
     };
 
@@ -613,5 +615,109 @@ describe('Phase 3: Effects, Overlays, Subtitles, Transitions, GIF/WebP, Denoise 
     expect(buf[1]).toBe(0x4b);
     expect(buf[2]).toBe(0x03);
     expect(buf[3]).toBe(0x04);
+  });
+});
+
+describe('Phase 4: Stabilization (deshake), PiP, WebCodecs Eligibility & Auto Subtitle SRT', () => {
+  const dummyVideoFile = new File([], 'main.mp4', { type: 'video/mp4' });
+  const dummyPipFile = new File([], 'reaction.mp4', { type: 'video/mp4' });
+  const source1 = {
+    id: 'src-1',
+    file: dummyVideoFile,
+    objectUrl: '',
+    metadata: SAMPLE_VIDEO_META,
+    addedAt: 1,
+  };
+
+  it('applies deshake video stabilization with mirror edge fill', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        stabilizeLevel: 'medium',
+        stabilizeEdgeMode: 'mirror',
+      },
+    });
+
+    const vf = plan.args[plan.args.indexOf('-vf') + 1];
+    expect(vf).toContain('deshake=rx=32:ry=32:edge=mirror:blocksize=8:contrast=125');
+  });
+
+  it('composites Picture-in-Picture video with border, offset, and mixed audio', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const defaults = createDefaultEditConfig();
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      pipFile: dummyPipFile,
+      pipHasAudio: true,
+      config: {
+        ...defaults,
+        pip: {
+          ...defaults.pip,
+          enabled: true,
+          position: 'top-left',
+          scalePct: 30,
+          offsetSec: 3.5,
+          borderEnabled: true,
+          audioMode: 'mix',
+        },
+      },
+    });
+
+    expect(plan.inputs).toHaveLength(2);
+    const fc = plan.args[plan.args.indexOf('-filter_complex') + 1];
+    expect(fc).toContain('pad=iw+6:ih+6:3:3:color=0xffffff');
+    expect(fc).toContain('setpts=PTS-STARTPTS+3.50/TB[pip_v]');
+    expect(fc).toContain("overlay=20:20:eof_action=pass:shortest=0:enable='gte(t,3.50)'[v_pip]");
+    expect(fc).toContain('adelay=3500|3500[pip_a]');
+    expect(fc).toContain('amix=inputs=2');
+  });
+
+  it('accurately evaluates WebCodecs HW fast-path eligibility and fallback reasons', async () => {
+    const { evaluateWebCodecsEligibility } = await import('../../services/webCodecsService');
+    const defaults = createDefaultEditConfig();
+
+    const ok = evaluateWebCodecsEligibility(SAMPLE_VIDEO_META, defaults, [FULL_CLIP], [], true);
+    expect(ok.eligible).toBe(true);
+
+    const noHw = evaluateWebCodecsEligibility(SAMPLE_VIDEO_META, defaults, [FULL_CLIP], [], false);
+    expect(noHw.eligible).toBe(false);
+    expect(noHw.reasonKey).toBe('hw.reasonUnsupported');
+
+    const withStab = evaluateWebCodecsEligibility(
+      SAMPLE_VIDEO_META,
+      { ...defaults, stabilizeLevel: 'light' },
+      [FULL_CLIP],
+      [],
+      true
+    );
+    expect(withStab.eligible).toBe(false);
+    expect(withStab.reasonKey).toBe('hw.reasonComplexGraph');
+  });
+
+  it('builds and parses Japanese SRT subtitle cues cleanly', async () => {
+    const { buildSrtContent, formatSrtTimestamp, parseSrtContent } = await import(
+      '../../services/autoSubtitleService'
+    );
+    expect(formatSrtTimestamp(65.432)).toBe('00:01:05,432');
+
+    const srt = buildSrtContent([
+      { id: '1', startSec: 1.2, endSec: 4.5, text: 'こんにちは世界' },
+      { id: '2', startSec: 5.0, endSec: 8.25, text: '自動字幕テスト' },
+    ]);
+    expect(srt).toContain('00:00:01,200 --> 00:00:04,500');
+    expect(srt).toContain('こんにちは世界');
+
+    const parsed = parseSrtContent(srt);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].text).toBe('こんにちは世界');
+    expect(parsed[1].endSec).toBeCloseTo(8.25, 2);
   });
 });

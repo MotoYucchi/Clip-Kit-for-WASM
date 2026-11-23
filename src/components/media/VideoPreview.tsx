@@ -14,6 +14,8 @@ export function VideoPreview() {
     clips,
     selectedClipId,
     watermarkPreviewUrl,
+    pipPreviewUrl,
+    subtitleCues,
     config,
     updateConfig,
     updateTrimRange,
@@ -322,6 +324,63 @@ export function VideoPreview() {
                 {config.textOverlay.text}
               </div>
             )}
+            {config.pip.enabled && pipPreviewUrl && (
+              <video
+                src={pipPreviewUrl}
+                muted
+                loop
+                autoPlay
+                playsInline
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  pointerEvents: 'none',
+                  width: `${config.pip.scalePct}%`,
+                  opacity: config.pip.opacity,
+                  border: config.pip.borderEnabled ? '2px solid #ffffff' : 'none',
+                  borderRadius: 4,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.55)',
+                  ...(config.pip.position === 'top-left'
+                    ? { top: 10, left: 10 }
+                    : config.pip.position === 'top-right'
+                      ? { top: 10, right: 10 }
+                      : config.pip.position === 'bottom-left'
+                        ? { bottom: 38, left: 10 }
+                        : config.pip.position === 'center'
+                          ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
+                          : { bottom: 38, right: 10 }),
+                }}
+              />
+            )}
+            {(() => {
+              const activeCue = subtitleCues.find(
+                (c) => currentTime >= c.startSec && currentTime <= c.endSec && c.text.trim()
+              );
+              if (!activeCue) return null;
+              return (
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    bottom: '10%',
+                    transform: 'translateX(-50%)',
+                    maxWidth: '90%',
+                    padding: '4px 12px',
+                    borderRadius: 6,
+                    background: 'rgba(0, 0, 0, 0.72)',
+                    color: '#ffffff',
+                    fontSize: '0.88rem',
+                    fontWeight: 600,
+                    textAlign: 'center',
+                    pointerEvents: 'none',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {activeCue.text}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

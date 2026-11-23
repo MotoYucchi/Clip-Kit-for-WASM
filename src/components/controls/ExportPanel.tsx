@@ -3,6 +3,7 @@ import { buildFullFFmpegCommand } from '../../engine/commandBuilder';
 import { estimateOutputSize } from '../../engine/sizeEstimator';
 import { translate } from '../../i18n';
 import { saveExportedBlob } from '../../services/exportService';
+import { evaluateWebCodecsEligibility } from '../../services/webCodecsService';
 import { useJobStore } from '../../store/useJobStore';
 import { usePlaybackStore } from '../../store/usePlaybackStore';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -22,6 +23,8 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
     selectedClipId,
     audioTracks,
     watermarkFile,
+    pipFile,
+    pipHasAudio,
     subtitleFile,
     subtitleFontFile,
     config,
@@ -53,6 +56,8 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
       config,
       watermarkFile,
       telopPngFile: telopPreviewFile,
+      pipFile,
+      pipHasAudio,
       subtitleFile,
       subtitleFontFile,
     });
@@ -63,12 +68,24 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
     selectedClipId,
     audioTracks,
     watermarkFile,
+    pipFile,
+    pipHasAudio,
     subtitleFile,
     subtitleFontFile,
     config,
   ]);
 
   if (!source || clips.length === 0 || !estimate || !commandPlan) return null;
+
+  const hwActive =
+    config.useWebCodecsHw &&
+    evaluateWebCodecsEligibility(
+      source.metadata,
+      config,
+      clips,
+      audioTracks,
+      device.supportsWebCodecs
+    ).eligible;
 
   const isBusy = wasmStatus === 'loading' || wasmStatus === 'running';
 
@@ -117,6 +134,7 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
         </div>
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {hwActive && <span className="pill pill-info">WebCodecs HW</span>}
           <span
             className={`pill ${
               commandPlan.usedStreamCopy

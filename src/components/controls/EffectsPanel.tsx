@@ -1,35 +1,43 @@
 import { useRef } from 'react';
+import { getFeatureCapability } from '../../config/deviceLimits';
 import { translate, type TranslationKey } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUiStore } from '../../store/useUiStore';
 import type {
   ClipTransitionType,
+  PipAudioMode,
+  StabilizeEdgeMode,
+  StabilizeLevel,
   SubtitleHandlingMode,
   TextVerticalPosition,
   WatermarkPosition,
 } from '../../types/edit';
 
 export function EffectsPanel() {
-  const { lang } = useUiStore();
+  const { lang, device } = useUiStore();
   const {
     source,
     clips,
     config,
     watermarkFile,
     watermarkPreviewUrl,
+    pipFile,
     subtitleFile,
     subtitleFontFile,
     updateConfig,
     setWatermarkFile,
+    setPipFile,
     setSubtitleFile,
     setSubtitleFontFile,
   } = useProjectStore();
 
   const wmInputRef = useRef<HTMLInputElement | null>(null);
+  const pipInputRef = useRef<HTMLInputElement | null>(null);
   const subInputRef = useRef<HTMLInputElement | null>(null);
   const fontInputRef = useRef<HTMLInputElement | null>(null);
 
   const t = (key: TranslationKey) => translate(lang, key);
+  const stabCap = getFeatureCapability('stabilize_video', device);
 
   if (!source) return null;
 
@@ -585,6 +593,209 @@ export function EffectsPanel() {
               </>
             )}
           </div>
+        )}
+      </div>
+
+      <hr style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: 0 }} />
+
+      {/* 7. Video Stabilization (deshake) */}
+      <div className="field-group">
+        <span className="field-label">{t('stab.heading')}</span>
+        <div className="field-row">
+          <div className="field-group">
+            <label className="field-label" htmlFor="fx-stab-level">
+              {t('stab.level')}
+            </label>
+            <select
+              id="fx-stab-level"
+              className="select-control"
+              value={config.stabilizeLevel}
+              onChange={(e) =>
+                updateConfig({ stabilizeLevel: e.target.value as StabilizeLevel })
+              }
+            >
+              <option value="none">{t('stab.none')}</option>
+              <option value="light">{t('stab.light')}</option>
+              <option value="medium">{t('stab.medium')}</option>
+              <option value="strong">{t('stab.strong')}</option>
+            </select>
+          </div>
+          <div className="field-group">
+            <label className="field-label" htmlFor="fx-stab-edge">
+              {t('stab.edge')}
+            </label>
+            <select
+              id="fx-stab-edge"
+              className="select-control"
+              disabled={config.stabilizeLevel === 'none'}
+              value={config.stabilizeEdgeMode}
+              onChange={(e) =>
+                updateConfig({ stabilizeEdgeMode: e.target.value as StabilizeEdgeMode })
+              }
+            >
+              <option value="mirror">{t('stab.edgeMirror')}</option>
+              <option value="original">{t('stab.edgeOriginal')}</option>
+              <option value="blank">{t('stab.edgeBlank')}</option>
+            </select>
+          </div>
+        </div>
+        {config.stabilizeLevel !== 'none' && stabCap.status === 'warn' && (
+          <div className="alert-banner alert-warning">
+            <span>{t('stab.mobileWarn')}</span>
+          </div>
+        )}
+      </div>
+
+      <hr style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: 0 }} />
+
+      {/* 8. Picture-in-Picture (PiP Video Overlay) */}
+      <div className="field-group">
+        <span className="field-label">{t('pip.heading')}</span>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            ref={pipInputRef}
+            type="file"
+            accept="video/*,.mp4,.mov,.webm,.mkv"
+            className="sr-only"
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              if (f) setPipFile(f, true);
+              e.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => pipInputRef.current?.click()}
+          >
+            {t('pip.selectVideo')}
+          </button>
+          {pipFile && (
+            <>
+              <span className="pill mono">{pipFile.name}</span>
+              <button
+                type="button"
+                className="btn btn-sm btn-danger"
+                onClick={() => setPipFile(null)}
+              >
+                {t('pip.clear')}
+              </button>
+            </>
+          )}
+        </div>
+
+        {pipFile && (
+          <>
+            <div className="field-row">
+              <div className="field-group">
+                <label className="field-label" htmlFor="fx-pip-pos">
+                  {t('pip.position')}
+                </label>
+                <select
+                  id="fx-pip-pos"
+                  className="select-control"
+                  value={config.pip.position}
+                  onChange={(e) =>
+                    updateConfig({
+                      pip: { ...config.pip, position: e.target.value as WatermarkPosition },
+                    })
+                  }
+                >
+                  <option value="bottom-right">Bottom Right</option>
+                  <option value="bottom-left">Bottom Left</option>
+                  <option value="top-right">Top Right</option>
+                  <option value="top-left">Top Left</option>
+                  <option value="center">Center</option>
+                </select>
+              </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="fx-pip-audio">
+                  {t('pip.audioMode')}
+                </label>
+                <select
+                  id="fx-pip-audio"
+                  className="select-control"
+                  value={config.pip.audioMode}
+                  onChange={(e) =>
+                    updateConfig({
+                      pip: { ...config.pip, audioMode: e.target.value as PipAudioMode },
+                    })
+                  }
+                >
+                  <option value="mute">{t('pip.audioMute')}</option>
+                  <option value="mix">{t('pip.audioMix')}</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="field-row">
+              <div className="field-group">
+                <div className="field-label">
+                  <span>{t('pip.scale')}</span>
+                  <span className="mono">{config.pip.scalePct}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={15}
+                  max={55}
+                  step={1}
+                  className="range-control"
+                  value={config.pip.scalePct}
+                  onChange={(e) =>
+                    updateConfig({ pip: { ...config.pip, scalePct: Number(e.target.value) } })
+                  }
+                />
+              </div>
+              <div className="field-group">
+                <div className="field-label">
+                  <span>{t('pip.opacity')}</span>
+                  <span className="mono">{Math.round(config.pip.opacity * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.2}
+                  max={1}
+                  step={0.05}
+                  className="range-control"
+                  value={config.pip.opacity}
+                  onChange={(e) =>
+                    updateConfig({ pip: { ...config.pip, opacity: Number(e.target.value) } })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="field-row">
+              <div className="field-group">
+                <label className="field-label" htmlFor="fx-pip-offset">
+                  {t('pip.offset')}
+                </label>
+                <input
+                  id="fx-pip-offset"
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  className="input-control mono"
+                  value={config.pip.offsetSec}
+                  onChange={(e) =>
+                    updateConfig({
+                      pip: { ...config.pip, offsetSec: Math.max(0, Number(e.target.value) || 0) },
+                    })
+                  }
+                />
+              </div>
+              <label className="checkbox-row" style={{ alignSelf: 'end' }}>
+                <input
+                  type="checkbox"
+                  checked={config.pip.borderEnabled}
+                  onChange={(e) =>
+                    updateConfig({ pip: { ...config.pip, borderEnabled: e.target.checked } })
+                  }
+                />
+                <span>{t('pip.border')}</span>
+              </label>
+            </div>
+          </>
         )}
       </div>
     </div>

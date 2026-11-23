@@ -32,6 +32,8 @@ import type {
   VideoCodec,
   VideoDenoiseLevel,
 } from '../../types/edit';
+import { evaluateWebCodecsEligibility } from '../../services/webCodecsService';
+import { AutoSubtitlePanel } from './AutoSubtitlePanel';
 import { EffectsPanel } from './EffectsPanel';
 import { MultiTrackAudioPanel } from './MultiTrackAudioPanel';
 
@@ -42,6 +44,7 @@ const TABS: { id: ControlTab; labelKey: TranslationKey; videoOnly?: boolean }[] 
   { id: 'speed', labelKey: 'tab.speed' },
   { id: 'transform', labelKey: 'tab.transform', videoOnly: true },
   { id: 'effects', labelKey: 'tab.effects', videoOnly: true },
+  { id: 'autosub', labelKey: 'tab.autosub' },
   { id: 'audio', labelKey: 'tab.audio' },
   { id: 'multitrack', labelKey: 'tab.multitrack', videoOnly: true },
   { id: 'compat', labelKey: 'tab.compat', videoOnly: true },
@@ -579,6 +582,52 @@ export function SettingsPanels() {
                     )}
                   </div>
                 )}
+                {/* WebCodecs Hardware Acceleration Toggle */}
+                {!containerSpec.isAnimatedImage && (() => {
+                  const hwCheck = evaluateWebCodecsEligibility(
+                    metadata,
+                    config,
+                    clips,
+                    audioTracks,
+                    device.supportsWebCodecs
+                  );
+                  return (
+                    <div
+                      className="field-group"
+                      style={{
+                        background: 'var(--bg-surface-elevated)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: 10,
+                      }}
+                    >
+                      <div className="field-label">
+                        <span>{t('hw.heading')}</span>
+                        <span className={`pill ${device.supportsWebCodecs ? 'pill-info' : ''}`}>
+                          {device.supportsWebCodecs
+                            ? t('hw.supportedBadge')
+                            : t('hw.unsupportedBadge')}
+                        </span>
+                      </div>
+                      <label className="checkbox-row" style={{ minHeight: 34 }}>
+                        <input
+                          type="checkbox"
+                          checked={config.useWebCodecsHw && device.supportsWebCodecs}
+                          disabled={!device.supportsWebCodecs}
+                          onChange={(e) => updateConfig({ useWebCodecsHw: e.target.checked })}
+                        />
+                        <span>{t('hw.enable')}</span>
+                      </label>
+                      {config.useWebCodecsHw && device.supportsWebCodecs && (
+                        <p className="field-hint">
+                          {hwCheck.eligible
+                            ? t('hw.activeFastPath')
+                            : `${t('hw.fallbackPrefix')}${hwCheck.reasonKey ? t(hwCheck.reasonKey as TranslationKey) : ''}`}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
 
@@ -1403,6 +1452,8 @@ export function SettingsPanels() {
             TAB 5.5: EFFECTS, TEXT TELOP, WATERMARK, TRANSITIONS & SUBTITLES
            ================================================================ */}
         {safeTab === 'effects' && <EffectsPanel />}
+
+        {safeTab === 'autosub' && <AutoSubtitlePanel />}
 
         {/* ================================================================
             TAB 7: MULTI-TRACK AUDIO (BGM / MIC RECORDING / MIX / LOUDNORM)
