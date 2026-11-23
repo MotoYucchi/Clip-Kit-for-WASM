@@ -1,0 +1,282 @@
+export const ja = {
+  // Brand & Header
+  'brand.title': 'WASM Clip Kit',
+  'brand.subtitle': '100% ブラウザ完結の動画加工スタジオ',
+  'brand.licensesTitle': 'ライセンス・ご利用上の注意',
+  'header.clientOnly': '端末完結・送信なし',
+  'header.modeSimple': '簡易モード',
+  'header.modeAdvanced': '詳細モード',
+  'header.themeDark': 'ダーク',
+  'header.themeLight': 'ライト',
+  'header.backToApp': 'Clip Kit に戻る',
+  'header.resetConfig': '設定をリセット',
+  'header.changeFile': '別ファイルを開く',
+
+  // WASM Status
+  'wasm.idle': 'WASM 待機中',
+  'wasm.loading': 'WASM 読込中...',
+  'wasm.ready': 'WASM 準備完了',
+  'wasm.running': '処理中...',
+  'wasm.error': 'WASM エラー',
+  'wasm.modeMt': 'マルチスレッド',
+  'wasm.modeSt': 'シングルスレッド',
+
+  // Device tiers & warnings
+  'device.pc': 'PC',
+  'device.tablet': 'タブレット',
+  'device.mobile': 'スマホ',
+  'device.warnLargeFile': 'このファイル（{size}）は {tier} での推奨サイズ（{limit} MB）を超えています。メモリ不足になる場合は解像度を下げるか短くカットして処理してください。',
+  'device.warnLongDuration': '再生時間が {tier} の推奨目安（{mins} 分）を超えています。処理に時間がかかる場合があります。',
+  'device.warnHevcPreview': 'このブラウザでは HEVC / 特殊コーデックの直接プレビューが非対応のため、書き出し時に H.264 等へ変換して確認できます（読み込み・変換自体は可能です）。',
+  'device.warnHdr': 'HDR 動画を検出しました。SDR 再生環境では色味が変化する場合があります（Phase 2 で HDR→SDR トーンマッピングを追加予定）。',
+  'device.warnVfr': '可変フレームレート（VFR）の可能性がある動画です（スマホ撮影など）。音ズレが気になる場合は詳細モードで再エンコードをお試しください。',
+  'device.warnRotated': '回転メタデータ（{deg}°）を検出しました。プレビューと出力の向きが一致するよう自動で正規化して処理します。',
+
+  // Capabilities
+  'cap.av1NotInCore': '同梱の標準 FFmpeg.wasm コアに AV1 エンコーダが含まれていないため現在非対応です',
+  'cap.mobileNo4k': 'スマホ端末ではメモリ不足を防ぐため 4K 書き出しは非対応です（1080p 以下を推奨）',
+  'cap.mobileNoTwoPass': 'スマホ端末では処理負荷とメモリ上限のため 2パス圧縮は非対応です',
+  'cap.mobileNoH265': 'スマホ端末では処理時間とメモリ消費が大きいため H.265 エンコードは非対応です（H.264 をご使用ください）',
+  'cap.mobileNoHeavyAudio': 'スマホ端末では多トラックの同時ミックスはメモリ制限により非対応です',
+  'cap.deviceNotSupported': 'この端末ではメモリまたはブラウザ制限のため利用できません',
+  'cap.lowMemoryWarn': '端末メモリ（約 {mem}GB）が少ないため、重い処理ではタブが停止する場合があります',
+  'cap.warn4kHeavy': '4K 書き出しは処理に時間がかかり、メモリ消費が大きくなります',
+  'cap.warnH265Slow': 'WASM 上での H.265 エンコードは H.264 より大幅に時間がかかります',
+  'cap.warnBlurHeavy': 'ブラー背景は計算負荷が高いため、スマホでは長尺動画の処理に時間がかかります',
+  'cap.warnReverseMemory': '逆再生は区間全体をメモリへ展開するため、短い区間（{sec}秒以内目安）での利用を推奨します',
+  'cap.heavyProcessWarn': 'この処理は端末への負荷が高くなります',
+
+  // Dropzone
+  'drop.title': '動画・音声ファイルをドロップ、または選択',
+  'drop.subtitle': 'MP4 / MOV (iPhone) / WebM / MKV / AVI / MPG / FLV / 3GP / TS / 音声ファイル対応',
+  'drop.privacyNote': 'ファイルはサーバーへ一切送信されず、お使いの端末内（FFmpeg.wasm）だけで処理されます',
+  'drop.selectBtn': 'ファイル・写真ライブラリから選択',
+  'drop.supportedNote': 'スマホは基本機能（カット・圧縮・解像度・比率・倍速・回転・音声抽出・ミュート・静止画）を実用レベルで保証',
+
+  // Recovery Banner
+  'recovery.message': '前回の編集設定（{fileName}）が残っています。復元しますか？',
+  'recovery.restore': '設定を復元',
+  'recovery.dismiss': '破棄',
+
+  // Metadata Bar
+  'meta.resolution': '解像度',
+  'meta.fps': 'FPS',
+  'meta.codec': 'コーデック',
+  'meta.duration': '長さ',
+  'meta.size': 'サイズ',
+  'meta.audioTracks': '音声トラック',
+  'meta.rotation': '回転メタ',
+  'meta.hdr': 'HDR',
+  'meta.sdr': 'SDR',
+  'meta.probing': '詳細解析中...',
+  'meta.audioOnly': '音声のみ',
+  'meta.tracksUnit': '{count} トラック',
+
+  // Preview & Compare
+  'preview.original': '変換前',
+  'preview.output': '変換後',
+  'preview.compare': '前後比較',
+  'preview.play': '再生',
+  'preview.pause': '一時停止',
+  'preview.prevFrame': '1フレーム戻る',
+  'preview.nextFrame': '1フレーム進む',
+  'preview.setStart': 'ここを開始点に',
+  'preview.setEnd': 'ここを終了点に',
+  'preview.setSnapshot': '現在時刻を静止画対象に',
+  'preview.noVideoPreview': 'このブラウザではプレビュー再生できませんが、FFmpeg.wasm で変換・書き出し可能です',
+
+  // Timeline
+  'timeline.title': 'タイムライン（単一区間カット）',
+  'timeline.enableTrim': '区間カットを有効にする',
+  'timeline.start': '開始',
+  'timeline.end': '終了',
+  'timeline.selectedDuration': '選択長さ',
+  'timeline.cutMode': 'カット方式',
+  'timeline.cutFast': '高速カット（再エンコードなし）',
+  'timeline.cutFastHint': 'キーフレーム単位で瞬時にカット（他フィルタ無効時のみ有効）',
+  'timeline.cutAccurate': '正確なカット（再エンコード）',
+  'timeline.cutAccurateHint': 'フレーム精度で正確にカット（他加工と1回でまとめてエンコード）',
+
+  // Quick Wizard (Simple Mode)
+  'wizard.title': 'やりたいことを選択（簡易モード）',
+  'wizard.subtitle': '目的に合わせた最適設定をワンタップでセットします。細かい調整は「詳細モード」へ切り替えできます。',
+  'wizard.compress': '容量を軽くする',
+  'wizard.compressDesc': '画質を保ちつつファイルサイズを圧縮',
+  'wizard.trim': '不要部分をカット',
+  'wizard.trimDesc': '開始・終了位置を指定して切り抜き',
+  'wizard.aspect': 'SNS向けに比率変更',
+  'wizard.aspectDesc': '9:16 縦動画・1:1・ブラー背景など',
+  'wizard.resize': '解像度を下げる',
+  'wizard.resizeDesc': '1080p / 720p / 480p へリサイズ',
+  'wizard.speed': '倍速・スロー・逆再生',
+  'wizard.speedDesc': '0.5x〜4x の速度変更や逆再生',
+  'wizard.rotate': '回転・反転・クロップ',
+  'wizard.rotateDesc': '90°回転や上下左右反転・切り抜き',
+  'wizard.extractAudio': '音声だけ取り出す',
+  'wizard.extractAudioDesc': 'MP3 / AAC / WAV / FLAC / Opus で抽出',
+  'wizard.mute': '音を消す（ミュート）',
+  'wizard.muteDesc': '全体または指定区間だけ無音化',
+  'wizard.snapshot': '静止画を切り出す',
+  'wizard.snapshotDesc': '現在のフレームを PNG / JPEG 保存',
+
+  // Tabs / Panels
+  'tab.output': '形式・圧縮',
+  'tab.trim': 'カット',
+  'tab.resize': '解像度・比率',
+  'tab.speed': '速度・逆再生',
+  'tab.transform': '回転・クロップ',
+  'tab.audio': '音声・ミュート',
+  'tab.snapshot': '静止画',
+
+  // Output & Compression Panel
+  'output.taskType': '書き出し種別',
+  'output.taskVideo': '動画として書き出し',
+  'output.taskAudio': '音声を抽出',
+  'output.taskSnapshot': '静止画を書き出し',
+  'output.container': '出力形式（コンテナ）',
+  'output.videoCodec': '映像コーデック',
+  'output.audioCodec': '音声コーデック',
+  'output.codecCopy': 'コピー（再エンコードなし）',
+  'output.compression': '容量圧縮プリセット',
+  'compress.high': '高画質',
+  'compress.highDesc': '劣化を最小限に抑える（CRF 19目安）',
+  'compress.standard': '標準',
+  'compress.standardDesc': '画質と容量のバランス重視（CRF 23目安）',
+  'compress.small': '小容量',
+  'compress.smallDesc': 'SNS・共有向けの軽量化（CRF 28目安）',
+  'compress.minimal': '最小容量',
+  'compress.minimalDesc': '容量優先の強力圧縮（CRF 33目安）',
+  'output.customCrf': 'CRF を手動調整する',
+  'output.crfHint': '数値が小さいほど高画質・大容量（推奨: 18〜32）',
+  'output.audioBitrate': '音声ビットレート',
+  'output.stripMetadata': 'メタデータを削除する（GPS 位置情報・撮影機器情報など）',
+  'output.stripMetadataHint': 'プライバシー保護のためデフォルトで有効です',
+
+  // Compatibility warnings
+  'compat.videoAutoAdjusted': '出力形式と非互換な映像コーデックを自動補正しました',
+  'compat.audioAutoAdjusted': '出力形式と非互換な音声コーデックを自動補正しました',
+  'compat.copyOverriddenByFilter': '映像フィルタが有効なため、映像コーデックを自動で再エンコードへ切り替えました',
+
+  // Resize & Aspect Panel
+  'resize.heading': '解像度の変更',
+  'resize.preset': '解像度プリセット',
+  'resize.original': '元のまま',
+  'resize.scaleOption': '任意倍率 (%)',
+  'resize.customOption': '幅 × 高さ 指定',
+  'resize.scalePercent': '倍率（25%〜400%）',
+  'resize.width': '幅 (px)',
+  'resize.height': '高さ (px)',
+  'resize.keepAspect': '縦横比を固定する',
+  'resize.algorithm': '拡大/縮小アルゴリズム',
+  'resize.resultSize': '出力予定解像度',
+
+  'aspect.heading': '画面比率の変更',
+  'aspect.preset': '目標アスペクト比',
+  'aspect.original': '元のまま',
+  'aspect.custom': 'カスタム比率',
+  'aspect.mode': '収め方（3モード）',
+  'aspect.modeStretch': '引き延ばし',
+  'aspect.modeLetterbox': 'レターボックス（余白塗り）',
+  'aspect.modeBlur': 'ブラー背景',
+  'aspect.letterboxColor': '余白の色',
+  'aspect.blurStrength': 'ブラー強度',
+  'aspect.blurBrightness': '背景の明るさ',
+  'aspect.blurDarker': '暗め（見やすい）',
+  'aspect.blurNormal': 'そのまま',
+
+  // Speed Panel
+  'speed.heading': '再生速度・逆再生',
+  'speed.presets': 'プリセット倍率',
+  'speed.custom': 'カスタム倍率（0.25x〜4.0x）',
+  'speed.pitchNote': '音声はピッチ（音程）を維持したまま速度変更します（atempo 多段処理）。',
+  'speed.reverse': '逆再生を有効にする',
+  'speed.reverseHint': '映像と音声を後ろから再生します。メモリ消費が大きいため短い区間推奨です。',
+
+  // Transform Panel
+  'transform.heading': '回転・反転・クロップ',
+  'transform.rotation': '回転（時計回り）',
+  'transform.flipH': '左右反転',
+  'transform.flipV': '上下反転',
+  'transform.cropEnable': '任意範囲のクロップを有効にする',
+  'transform.cropX': '左位置 (%)',
+  'transform.cropY': '上位置 (%)',
+  'transform.cropW': '幅 (%)',
+  'transform.cropH': '高さ (%)',
+  'transform.cropReset': 'クロップ範囲をリセット',
+
+  // Audio & Mute Panel
+  'audio.muteHeading': 'ミュート・音声トラック制御',
+  'audio.muteNone': 'ミュートしない（音声を保持）',
+  'audio.muteAll': '全体ミュート（音声トラック削除）',
+  'audio.muteRange': '選択区間のみミュート',
+  'audio.muteRemoveTrack': '特定トラックのみ削除',
+  'audio.rangeStart': 'ミュート開始 (秒)',
+  'audio.rangeEnd': 'ミュート終了 (秒)',
+  'audio.noMultiTrack': '入力ファイルに複数音声トラックがありません（1トラックのみ）。',
+  'audio.extractHeading': '音声の抽出モード',
+  'audio.extractSwitch': '音声抽出モードへ切り替え',
+  'audio.extractFormat': '抽出フォーマット',
+  'audio.extractTrack': '抽出する音声トラック',
+  'audio.extractBitrate': 'ビットレート',
+
+  // Snapshot Panel
+  'snapshot.heading': '静止画の書き出し',
+  'snapshot.switch': '静止画書き出しモードへ切り替え',
+  'snapshot.format': '画像形式',
+  'snapshot.time': '切り出し時刻 (秒)',
+  'snapshot.useCurrent': 'プレビュー現在時刻をセット',
+  'snapshot.jpegQuality': 'JPEG 品質（値が小さいほど高画質）',
+
+  // Export CTA & Estimate
+  'export.estimatedSize': '推定出力サイズ',
+  'export.singlePass': '複数加工を1回のエンコードに統合',
+  'export.fastCopy': '無劣化・高速コピー処理',
+  'export.runBtn': '加工を実行する',
+  'export.runAudioBtn': '音声を抽出する',
+  'export.runSnapshotBtn': '静止画を書き出す',
+  'export.showCommand': 'FFmpeg コマンド確認',
+  'export.resultReady': '書き出し完了',
+  'export.saveBtn': '保存する',
+  'export.shareBtn': '共有 / 写真に保存',
+  'export.downloadBtn': 'ダウンロード',
+  'export.elapsed': '処理時間: {sec}秒',
+
+  // Progress Modal
+  'progress.title': '端末内で処理しています...',
+  'progress.loadingWasm': '初回 WASM エンジンを読み込んでいます（約 31MB）...',
+  'progress.keepOpen': '画面を閉じたりスリープさせないでください',
+  'progress.wakeLockOn': '画面スリープ抑止（Wake Lock）稼働中',
+  'progress.eta': '残り約 {eta}',
+  'progress.etaCalculating': '残り時間を計算中...',
+  'progress.cancel': '処理をキャンセル',
+  'progress.logsToggle': '処理ログを表示',
+
+  // Notice & Footer (Music Converter unified format)
+  'notice.badge': 'トラッキングなし',
+  'notice.text':
+    '動画・音声データの外部送信や解析Cookieは一切使用しません（言語・設定復元にブラウザ内保存のみ使用）。初回実行時に約31MBのWASMエンジンを読み込み、すべての処理はお使いの端末上で実行されるため、処理速度や安定性はご利用端末の性能に依存します。',
+  'notice.link': '詳細・ライセンス表記 →',
+  'footer.privacy': '端末完結処理 / 解析Cookie不使用',
+  'footer.licenses': 'ライセンス・ご利用上の注意',
+
+  // Licenses Page (Music Converter unified format)
+  'licenses.privacyHeading': 'プライバシー保護・Cookie の取り扱いについて',
+  'licenses.privacy1':
+    '<strong>トラッキング Cookie 一切不使用</strong>: 本サイトではアクセス解析、広告、ユーザー追跡用の Cookie や Web ビーコンを一切使用していません。',
+  'licenses.privacy2':
+    '<strong>ブラウザ内保存（機能性ストレージ）について</strong>: 表示言語・テーマ設定およびタブ強制終了時の編集設定復元のためにのみ、お使いのブラウザ内の <code>localStorage</code> を使用します。これらのデータが外部へ送信されることはありません。',
+  'licenses.privacy3':
+    '<strong>外部送信なし（100% クライアントサイド処理）</strong>: 選択された動画・音声ファイル、生成された静止画や加工済みファイルが外部サーバーへ送信・保存されることはありません。',
+  'licenses.privacy4':
+    '<strong>一時データの破棄</strong>: 加工前後のメディアデータはブラウザの一時メモリ（Blob URL / WebAssembly 仮想ファイルシステム）上でのみ保持され、処理完了後またはタブを閉じると破棄されます。',
+  'licenses.noticeHeading': 'WASM 処理・ご利用端末に関する注意事項',
+  'licenses.notice1':
+    '<strong>初回読み込みサイズについて</strong>: 初回変換時（または詳細メタデータ解析時）に WebAssembly コア（<code>ffmpeg-core.wasm</code> 約 31MB）をお使いのブラウザへ読み込みます。モバイル回線等をご利用の際は通信量にご注意ください（PWA キャッシュ対応）。',
+  'licenses.notice2':
+    '<strong>処理速度と安定性はご利用端末に依存します</strong>: 動画のデコード・フィルタ処理・エンコードはすべてご利用者様のデバイス（CPU・メモリ）上で実行されます。長尺動画・4K 解像度・逆再生・ブラー背景などの重い処理における安定性は、端末スペックやブラウザのメモリ上限に依存します。',
+  'licenses.notice3':
+    '<strong>スマホ・タブレットご利用時の推奨事項</strong>: メモリ不足によるブラウザ終了を防ぐため、スマートフォンでは 1080p 以下・数分・数百MB 程度を目安にご利用ください。処理中は画面を閉じずにお待ちください。',
+  'licenses.libsHeading': '使用ライブラリ・サードパーティライセンス表記',
+} as const;
+
+export type TranslationKey = keyof typeof ja;

@@ -1,0 +1,39 @@
+{
+  "name": "clip-kit-for-wasm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "100% Client-Side Multi-Function Video Toolkit powered by FFmpeg.wasm",
+  "scripts": {
+    "predev": "npm run sync-vendor",
+    "dev": "vite",
+    "prebuild": "npm run sync-vendor",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sync-vendor": "mkdir -p public/vendor/ffmpeg-core && cp -r node_modules/@ffmpeg/core/dist/esm/* public/vendor/ffmpeg-core/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MotoYucchi/Clip-Kit-for-WASM.git"
+  },
+  "author": "MotoYucchi",
+  "license": "MIT",
+  "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11",
+    "vitest": "^3.0.5"
+  }
+}
