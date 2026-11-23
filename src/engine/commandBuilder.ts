@@ -8,6 +8,7 @@ import type { AudioOverlayTrack, ClipSegment, EditConfig } from '../types/edit';
 import type { MediaMetadata, MediaSourceItem } from '../types/media';
 import { clamp, getExtension, sanitizeFilename, stripExtension } from '../utils/formatters';
 import { buildFullFilterGraph } from './filterGraphBuilder';
+import type { PerformanceTuning } from './performanceTuner';
 
 export interface CommandInputSpec {
   placeholder: string;
@@ -78,6 +79,7 @@ export interface BuildCommandOptions {
   pipHasAudio?: boolean;
   subtitleFile?: File | null;
   subtitleFontFile?: File | null;
+  tuning?: PerformanceTuning | null;
 }
 
 export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommandPlan {
@@ -94,6 +96,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
     pipHasAudio = false,
     subtitleFile = null,
     subtitleFontFile = null,
+    tuning = null,
   } = opts;
 
   const metadata = primarySource.metadata;
@@ -403,16 +406,24 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
 
   const buildPassArgs = (passNumber: 0 | 1 | 2): string[] => {
     const args: string[] = [];
+    const activeThreads = tuning?.ffmpegThreads ?? 0;
+    const x264Preset = tuning?.x264Preset ?? presetSpec.x264Preset;
+    const vp9CpuUsed = tuning?.vp9CpuUsed ?? 6;
 
-    if (!isMultiClip && !isMultiInput && config.trimEnabled && useVideoCopy && useAudioCopy) {
-      args.push('-ss', trimStart.toFixed(3), '-to', trimEnd.toFixed(3), '-i', inputs[0].placeholder);
+    // Fast input seeking (-ss & -t BEFORE -i) skips decoding discarded footage before startSec!
+    if (!isMultiClip && config.trimEnabled) {
+      args.push('-ss', trimStart.toFixed(3), '-t', trimDuration.toFixed(3), '-i', inputs[0].placeholder);
+      for (let i = 1; i < inputs.length; i++) {
+        args.push('-i', inputs[i].placeholder);
+      }
     } else {
       for (const inp of inputs) {
         args.push('-i', inp.placeholder);
       }
-      if (!isMultiClip && config.trimEnabled) {
-        args.push('-ss', trimStart.toFixed(3), '-to', trimEnd.toFixed(3));
-      }
+    }
+
+    if (activeThreads > 0) {
+      args.push('-threads', String(activeThreads));
     }
 
     // Filters & Stream Mapping
@@ -495,11 +506,13 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
         'default'
       );
     } else if (metadata.hasVideo) {
-      // Standard video codecs
       if (effectiveVideoCodec === 'copy') {
         args.push('-c:v', 'copy');
       } else if (effectiveVideoCodec === 'h264') {
-        args.push('-c:v', 'libx264', '-preset', presetSpec.x264Preset, '-pix_fmt', 'yuv420p');
+        args.push('-c:v', 'libx264', '-preset', x264Preset, '-pix_fmt', 'yuv420p');
+        if (tuning?.useFastDecodeTune) {
+          args.push('-tune', 'fastdecode');
+        }
         if (computedVideoBitrateKbps) {
           args.push(
             '-b:v',
@@ -521,7 +534,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
           '-c:v',
           'libx265',
           '-preset',
-          presetSpec.x264Preset,
+          x264Preset,
           '-pix_fmt',
           'yuv420p',
           '-tag:v',
@@ -537,9 +550,9 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
           args.push('-crf', String(clamp(Math.round(crf), 16, 45)));
         }
       } else if (effectiveVideoCodec === 'vp9') {
-        args.push('-c:v', 'libvpx-vp9', '-pix_fmt', 'yuv420p');
+        args.push('-c:v', 'libvpx-vp9', '-pix_fmt', 'yuv420p', '-row-mt', '1', '-tile-columns', '2');
         if (computedVideoBitrateKbps) {
-          args.push('-b:v', `${computedVideoBitrateKbps}k`, '-cpu-used', '4');
+          args.push('-b:v', `${computedVideoBitrateKbps}k`, '-cpu-used', String(vp9CpuUsed));
         } else {
           const crf =
             config.rateControlMode === 'crf' || config.useCustomCrf
@@ -553,7 +566,7 @@ export function buildFullFFmpegCommand(opts: BuildCommandOptions): FFmpegCommand
             '-deadline',
             'realtime',
             '-cpu-used',
-            '5'
+            String(vp9CpuUsed)
           );
         }
       }

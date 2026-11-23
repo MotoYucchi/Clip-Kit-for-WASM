@@ -9,7 +9,10 @@ import {
 } from '../../config/presets';
 import { computeTargetVideoBitrateKbps } from '../../engine/commandBuilder';
 import { buildFullFilterGraph, computeOutputDimensions } from '../../engine/filterGraphBuilder';
+import { evaluateParallelChunkEligibility } from '../../engine/parallelEncoder';
+import { computePerformanceTuning } from '../../engine/performanceTuner';
 import { translate, type TranslationKey } from '../../i18n';
+import { useJobStore } from '../../store/useJobStore';
 import { usePlaybackStore } from '../../store/usePlaybackStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUiStore, type ControlTab } from '../../store/useUiStore';
@@ -27,6 +30,7 @@ import type {
   ResolutionPreset,
   RotationDegrees,
   ScaleAlgorithm,
+  SpeedProfile,
   SpeedScope,
   UseCasePresetId,
   VideoCodec,
@@ -51,8 +55,9 @@ const TABS: { id: ControlTab; labelKey: TranslationKey; videoOnly?: boolean }[] 
   { id: 'snapshot', labelKey: 'tab.snapshot', videoOnly: true },
 ];
 
-export function SettingsPanels() {
+export function SettingsPanels({ hideTabBar = false }: { hideTabBar?: boolean } = {}) {
   const { lang, device, activeTab, setActiveTab } = useUiStore();
+  const { wasmMode } = useJobStore();
   const {
     source,
     clips,
@@ -120,28 +125,44 @@ export function SettingsPanels() {
     updateConfig(patch);
   };
 
+  const perfTuning = computePerformanceTuning(
+    device,
+    config.speedProfile,
+    wasmMode,
+    config.enableParallelChunks
+  );
+  const parallelCheck = evaluateParallelChunkEligibility(
+    metadata,
+    config,
+    clips,
+    audioTracks,
+    perfTuning
+  );
+
   return (
-    <section className="panel" aria-label="Editing Settings">
-      {/* Tab Navigation */}
-      <div className="tabs-bar" role="tablist" aria-label="Tool categories">
-        {visibleTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={safeTab === tab.id}
-            className={`tab-btn ${safeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {t(tab.labelKey)}
-            {tab.id === 'multitrack' && audioTracks.length > 0 ? ` (${audioTracks.length})` : ''}
-          </button>
-        ))}
-      </div>
+    <section className={hideTabBar ? '' : 'panel'} aria-label="Editing Settings">
+      {/* Tab Navigation (hidden inside mobile bottom sheet because MobileToolDock handles tabs) */}
+      {!hideTabBar && (
+        <div className="tabs-bar" role="tablist" aria-label="Tool categories">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={safeTab === tab.id}
+              className={`tab-btn ${safeTab === tab.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {t(tab.labelKey)}
+              {tab.id === 'multitrack' && audioTracks.length > 0 ? ` (${audioTracks.length})` : ''}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Auto-adjustment warnings */}
       {compatNoticeKeys.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: hideTabBar ? 0 : 10 }}>
           {compatNoticeKeys.map((k, idx) => (
             <div key={idx} className="alert-banner alert-info" role="status">
               <span>{t(k as TranslationKey)}</span>
@@ -150,7 +171,7 @@ export function SettingsPanels() {
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: hideTabBar ? 4 : 14 }}>
         {/* ================================================================
             TAB 1: OUTPUT FORMAT, USE-CASE PRESETS, CODEC & RATE CONTROL
            ================================================================ */}
@@ -628,6 +649,69 @@ export function SettingsPanels() {
                     </div>
                   );
                 })()}
+
+                {/* Hardware-Adaptive Speed & Parallel Chunk Worker Tuning */}
+                {!containerSpec.isAnimatedImage && (
+                  <div
+                    className="field-group"
+                    style={{
+                      background: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: 10,
+                    }}
+                  >
+                    <div className="field-label">
+                      <span>{t('perf.heading')}</span>
+                      <span
+                        className={`pill ${
+                          parallelCheck.eligible
+                            ? 'pill-success'
+                            : perfTuning.ffmpegThreads > 1
+                              ? 'pill-info'
+                              : ''
+                        }`}
+                      >
+                        {perfTuning.badgeLabel}
+                      </span>
+                    </div>
+
+                    <div className="field-group">
+                      <label className="field-label" htmlFor="sel-speed-profile">
+                        {t('perf.profile')}
+                      </label>
+                      <select
+                        id="sel-speed-profile"
+                        className="select-control"
+                        value={config.speedProfile}
+                        onChange={(e) =>
+                          updateConfig({ speedProfile: e.target.value as SpeedProfile })
+                        }
+                      >
+                        <option value="auto">{t('perf.auto')}</option>
+                        <option value="fastest">{t('perf.fastest')}</option>
+                        <option value="balanced">{t('perf.balanced')}</option>
+                        <option value="quality">{t('perf.quality')}</option>
+                      </select>
+                    </div>
+
+                    <label className="checkbox-row" style={{ minHeight: 34 }}>
+                      <input
+                        type="checkbox"
+                        checked={config.enableParallelChunks}
+                        onChange={(e) =>
+                          updateConfig({ enableParallelChunks: e.target.checked })
+                        }
+                      />
+                      <span>{t('perf.parallelChunks')}</span>
+                    </label>
+                    <p className="field-hint">
+                      {perfTuning.parallelWorkers > 1
+                        ? t('perf.parallelHint', { workers: perfTuning.parallelWorkers })
+                        : t('perf.parallelSingleHint')}
+                    </p>
+                  </div>
+                )}
               </>
             )}
 

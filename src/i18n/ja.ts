@@ -512,9 +512,41 @@ export const ja = {
   'autosub.clearAll': '全消去',
   'autosub.empty': '「音声区間検出」または「音声認識」で字幕を自動生成するか、手動で字幕行を追加してください。',
   'autosub.appliedToast': '{count} 件の字幕を SRT として適用しました',
+
+  // Performance Tuning & Parallelization
+  'perf.heading': '処理速度・並列化チューニング',
+  'perf.profile': 'エンコード速度プロファイル',
+  'perf.auto': '自動最適化（端末性能に合わせる）',
+  'perf.fastest': '最速優先（ultrafast・高速処理）',
+  'perf.balanced': 'バランス（速度と画質を両立）',
+  'perf.quality': '高圧縮優先（低速・高効率）',
+  'perf.parallelChunks': '長尺動画の並列チャンク処理を有効化（マルチワーカー）',
+  'perf.parallelHint': '16秒以上の動画を {workers} 分割して同時エンコード→無劣化結合します（メモリ・コア数に応じて自動調整）。',
+  'perf.parallelSingleHint': 'この端末のメモリ/コア数では単一ワーカー＋マルチスレッド最適化を推奨します。',
+  'perf.activeEngine': '適用エンジン設定',
+
+  // Mobile / Tablet Redesigned UX
+  'mobile.menu': 'メニュー',
+  'mobile.close': '閉じる',
+  'mobile.expand': '拡大',
+  'mobile.half': '半画面',
+  'mobile.details': '詳細情報',
+  'mobile.warningsCount': '注意 {count}件',
+  'mobile.dock.output': '形式・速度',
+  'mobile.dock.trim': 'カット',
+  'mobile.dock.resize': '解像度/比',
+  'mobile.dock.speed': '倍速',
+  'mobile.dock.transform': '回転/切抜',
+  'mobile.dock.effects': '効果/PiP',
+  'mobile.dock.autosub': '自動字幕',
+  'mobile.dock.audio': '音声抽出',
+  'mobile.dock.multitrack': 'BGM/録音',
+  'mobile.dock.compat': '修復/FPS',
+  'mobile.dock.snapshot': '静止画',
 } as const;
 
 export type TranslationKey = keyof typeof ja;
+
 
 
 

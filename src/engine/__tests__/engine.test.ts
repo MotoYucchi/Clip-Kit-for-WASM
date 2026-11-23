@@ -721,3 +721,165 @@ describe('Phase 4: Stabilization (deshake), PiP, WebCodecs Eligibility & Auto Su
     expect(parsed[1].endSec).toBeCloseTo(8.25, 2);
   });
 });
+
+describe('Performance Tuning, Parallel Chunk Pool & Fast Input Seeking', () => {
+  const highEndPc = {
+    tier: 'pc' as const,
+    cpuCores: 8,
+    deviceMemoryGB: 16,
+    isMemoryEstimated: false,
+    supportsSharedArrayBuffer: true,
+    isCrossOriginIsolated: true,
+    supportsWakeLock: true,
+    supportsWebShareFiles: false,
+    supportsMediaRecorder: true,
+    supportsWebCodecs: true,
+    supportsSpeechRecognition: true,
+    isIOS: false,
+    isAndroid: false,
+    isSafari: false,
+    isTouch: false,
+    screenShortSide: 900,
+  };
+
+  const lowRamMobile = {
+    tier: 'mobile' as const,
+    cpuCores: 4,
+    deviceMemoryGB: 3,
+    isMemoryEstimated: true,
+    supportsSharedArrayBuffer: false,
+    isCrossOriginIsolated: false,
+    supportsWakeLock: true,
+    supportsWebShareFiles: true,
+    supportsMediaRecorder: true,
+    supportsWebCodecs: false,
+    supportsSpeechRecognition: false,
+    isIOS: true,
+    isAndroid: false,
+    isSafari: true,
+    isTouch: true,
+    screenShortSide: 390,
+  };
+
+  it('adapts FFmpeg threads, presets, and parallel worker pool count to device hardware', async () => {
+    const { computePerformanceTuning } = await import('../performanceTuner');
+
+    const pcAuto = computePerformanceTuning(highEndPc, 'auto', 'mt', true);
+    expect(pcAuto.ffmpegThreads).toBeGreaterThanOrEqual(6);
+    expect(pcAuto.parallelWorkers).toBe(3);
+    expect(pcAuto.x264Preset).toBe('superfast');
+
+    const pcFastest = computePerformanceTuning(highEndPc, 'fastest', 'mt', true);
+    expect(pcFastest.parallelWorkers).toBe(4);
+    expect(pcFastest.x264Preset).toBe('ultrafast');
+    expect(pcFastest.useFastDecodeTune).toBe(true);
+
+    const mobileSt = computePerformanceTuning(lowRamMobile, 'auto', 'st', true);
+    expect(mobileSt.ffmpegThreads).toBe(1);
+    expect(mobileSt.parallelWorkers).toBe(1);
+    expect(mobileSt.x264Preset).toBe('ultrafast');
+    expect(mobileSt.useFastDecodeTune).toBe(true);
+    expect(mobileSt.vp9CpuUsed).toBe(8);
+  });
+
+  it('accurately evaluates parallel chunk worker eligibility for long vs short/complex jobs', async () => {
+    const { computePerformanceTuning } = await import('../performanceTuner');
+    const { evaluateParallelChunkEligibility } = await import('../parallelEncoder');
+
+    const pcTuning = computePerformanceTuning(highEndPc, 'auto', 'mt', true);
+    const defaults = createDefaultEditConfig();
+
+    const eligible = evaluateParallelChunkEligibility(
+      SAMPLE_VIDEO_META,
+      defaults,
+      [FULL_CLIP],
+      [],
+      pcTuning
+    );
+    expect(eligible.eligible).toBe(true);
+    expect(eligible.chunkCount).toBe(3);
+
+    const tooShort = evaluateParallelChunkEligibility(
+      SAMPLE_VIDEO_META,
+      { ...defaults, trimEnabled: true },
+      [{ id: 'short', sourceId: 'src-1', startSec: 0, endSec: 10 }],
+      [],
+      pcTuning
+    );
+    expect(tooShort.eligible).toBe(false);
+
+    const reversed = evaluateParallelChunkEligibility(
+      SAMPLE_VIDEO_META,
+      { ...defaults, reverse: true },
+      [FULL_CLIP],
+      [],
+      pcTuning
+    );
+    expect(reversed.eligible).toBe(false);
+
+    const twoPass = evaluateParallelChunkEligibility(
+      SAMPLE_VIDEO_META,
+      { ...defaults, rateControlMode: 'targetSize', enableTwoPass: true },
+      [FULL_CLIP],
+      [],
+      pcTuning
+    );
+    expect(twoPass.eligible).toBe(false);
+  });
+
+  it('uses fast input seeking (-ss before -i), -threads, ultrafast + fastdecode, and VP9 row-mt', async () => {
+    const { computePerformanceTuning } = await import('../performanceTuner');
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+
+    const dummySource = {
+      id: 'src-1',
+      file: new File([], 'sample.mp4', { type: 'video/mp4' }),
+      objectUrl: '',
+      metadata: SAMPLE_VIDEO_META,
+      addedAt: 1,
+    };
+
+    const pcFastest = computePerformanceTuning(highEndPc, 'fastest', 'mt', true);
+    const h264Plan = buildFullFFmpegCommand({
+      primarySource: dummySource,
+      sources: [dummySource],
+      clips: [{ id: 'c1', sourceId: 'src-1', startSec: 20, endSec: 45 }],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        trimEnabled: true,
+        cutMode: 'accurate',
+      },
+      tuning: pcFastest,
+    });
+
+    const ssIdx = h264Plan.args.indexOf('-ss');
+    const inputIdx = h264Plan.args.indexOf('-i');
+    expect(ssIdx).toBeGreaterThan(-1);
+    expect(ssIdx).toBeLessThan(inputIdx);
+    expect(h264Plan.args).toContain('-threads');
+    expect(h264Plan.args).toContain('ultrafast');
+    expect(h264Plan.args).toContain('-tune');
+    expect(h264Plan.args).toContain('fastdecode');
+
+    const vp9Plan = buildFullFFmpegCommand({
+      primarySource: dummySource,
+      sources: [dummySource],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        container: 'webm',
+        videoCodec: 'vp9',
+        audioCodec: 'opus',
+      },
+      tuning: pcFastest,
+    });
+
+    expect(vp9Plan.args).toContain('-row-mt');
+    expect(vp9Plan.args).toContain('1');
+    expect(vp9Plan.args).toContain('-tile-columns');
+    expect(vp9Plan.args).toContain('-cpu-used');
+  });
+});
+

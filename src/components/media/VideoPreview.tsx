@@ -152,7 +152,7 @@ export function VideoPreview() {
   const effectivePreviewMode = hasResult ? previewMode : 'original';
 
   return (
-    <section className="panel" aria-label="Media Preview">
+    <section className="panel preview-panel-sticky" aria-label="Media Preview">
       <div className="panel-header">
         <div className="segmented" role="tablist" aria-label="Preview Mode">
           <button

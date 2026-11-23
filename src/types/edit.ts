@@ -134,8 +134,14 @@ export interface WatermarkConfig {
   marginPx: number;
 }
 
+export type SpeedProfile = 'auto' | 'fastest' | 'balanced' | 'quality';
+
 export interface EditConfig {
   taskType: ExportTaskType;
+
+  // Performance & Parallelization Tuning
+  speedProfile: SpeedProfile;
+  enableParallelChunks: boolean;
 
   // Format & codecs
   container: OutputContainer;

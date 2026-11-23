@@ -514,7 +514,39 @@ export const en: Record<TranslationKey, string> = {
   'autosub.clearAll': 'Clear All',
   'autosub.empty': 'Run Offline VAD or Live Speech Recognition to generate cues, or add one manually.',
   'autosub.appliedToast': 'Applied {count} subtitle cue(s) as SRT',
+
+  // Performance Tuning & Parallelization
+  'perf.heading': 'Performance & Parallelization',
+  'perf.profile': 'Encode Speed Profile',
+  'perf.auto': 'Auto (Hardware-Adaptive)',
+  'perf.fastest': 'Fastest (ultrafast)',
+  'perf.balanced': 'Balanced',
+  'perf.quality': 'High Compression (Slower)',
+  'perf.parallelChunks': 'Enable Parallel Chunk Encoding (Multi-Worker)',
+  'perf.parallelHint': 'Splits videos >=16s across {workers} concurrent workers, then stitches losslessly.',
+  'perf.parallelSingleHint': 'Single worker + multi-thread optimization is recommended for this device RAM/CPU.',
+  'perf.activeEngine': 'Active Tuning',
+
+  // Mobile / Tablet Redesigned UX
+  'mobile.menu': 'Menu',
+  'mobile.close': 'Close',
+  'mobile.expand': 'Expand',
+  'mobile.half': 'Half',
+  'mobile.details': 'Details',
+  'mobile.warningsCount': '{count} warning(s)',
+  'mobile.dock.output': 'Format',
+  'mobile.dock.trim': 'Trim',
+  'mobile.dock.resize': 'Resize',
+  'mobile.dock.speed': 'Speed',
+  'mobile.dock.transform': 'Rotate',
+  'mobile.dock.effects': 'Effects',
+  'mobile.dock.autosub': 'AutoSub',
+  'mobile.dock.audio': 'Audio',
+  'mobile.dock.multitrack': 'BGM/Mic',
+  'mobile.dock.compat': 'Repair',
+  'mobile.dock.snapshot': 'Still',
 };
+
 
 
 

@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExportPanel } from './components/controls/ExportPanel';
+import { MobileToolDock } from './components/controls/MobileToolDock';
 import { QuickWizard } from './components/controls/QuickWizard';
 import { SettingsPanels } from './components/controls/SettingsPanels';
 import { Footer, NoticeStrip } from './components/layout/Footer';
@@ -14,8 +15,13 @@ import { Timeline } from './components/timeline/Timeline';
 import { buildFullFFmpegCommand } from './engine/commandBuilder';
 import { ffmpegClient } from './engine/ffmpegClient';
 import { computeOutputDimensions } from './engine/filterGraphBuilder';
+import {
+  evaluateParallelChunkEligibility,
+  runParallelChunkEncode,
+} from './engine/parallelEncoder';
+import { computePerformanceTuning } from './engine/performanceTuner';
 import { probeViaBrowserElement } from './engine/probeParser';
-import { translate } from './i18n';
+import { translate, type TranslationKey } from './i18n';
 import { renderTextOverlayToPngFile } from './services/textOverlayRenderer';
 import { wakeLockService } from './services/wakeLockService';
 import { extractWaveformPeaks } from './services/waveformService';
@@ -33,6 +39,7 @@ export function App() {
     lang,
     device,
     uiMode,
+    activeTab,
     mobileSheetOpen,
     setMobileSheetOpen,
     setShortcutsOpen,
@@ -64,9 +71,10 @@ export function App() {
   } = useProjectStore();
 
   const hwAbortRef = useRef<AbortController | null>(null);
+  const parallelAbortRef = useRef<AbortController | null>(null);
+  const [sheetExpanded, setSheetExpanded] = useState(false);
 
   const {
-    wasmStatus,
     setWasmState,
     startJob,
     updateProgress,
@@ -78,7 +86,7 @@ export function App() {
 
   const { setPreviewMode, setCurrentTime } = usePlaybackStore();
 
-  const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+  const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     translate(lang, key, params);
 
   useEffect(() => {
@@ -91,7 +99,11 @@ export function App() {
   useEffect(() => {
     const onResize = () => refreshDevice();
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
   }, [refreshDevice]);
 
   // Full PC Keyboard Shortcuts (Space, J/K/L, I/O, Left/Right, S, Ctrl+Z/Ctrl+Shift+Z, ?)
@@ -235,6 +247,13 @@ export function App() {
     const wakeLocked = await wakeLockService.acquire();
     startJob(wakeLocked);
 
+    const tuning = computePerformanceTuning(
+      device,
+      config.speedProfile,
+      ffmpegClient.getMode(),
+      config.enableParallelChunks
+    );
+
     const hwCheck =
       config.useWebCodecsHw &&
       evaluateWebCodecsEligibility(
@@ -246,7 +265,7 @@ export function App() {
       ).eligible;
 
     try {
-      // Optional Phase 4 WebCodecs Hybrid Hardware Fast Path
+      // 1. Optional Phase 4 WebCodecs Hybrid Hardware Fast Path
       if (hwCheck) {
         const ac = new AbortController();
         hwAbortRef.current = ac;
@@ -304,8 +323,68 @@ export function App() {
         pipHasAudio,
         subtitleFile,
         subtitleFontFile,
+        tuning,
       });
 
+      // 2. Hardware-Adaptive Parallel Chunk Worker Pool (for >= 16s re-encodes on capable devices)
+      const parallelCheck = evaluateParallelChunkEligibility(
+        source.metadata,
+        config,
+        clips,
+        audioTracks,
+        tuning
+      );
+
+      if (parallelCheck.eligible && !plan.usedStreamCopy) {
+        const ac = new AbortController();
+        parallelAbortRef.current = ac;
+        setWasmState('running', ffmpegClient.getMode());
+        try {
+          const parallelRes = await runParallelChunkEncode({
+            source,
+            clip: clips[0],
+            config,
+            tuning,
+            chunkCount: parallelCheck.chunkCount,
+            watermarkFile,
+            telopPngFile,
+            signal: ac.signal,
+            onProgress: (pct, elapsed, eta) => updateProgress(pct, elapsed, eta),
+            onLog: (line) => appendLog(line),
+          });
+          parallelAbortRef.current = null;
+          setWasmState('ready', ffmpegClient.getMode());
+          const objectUrl = URL.createObjectURL(parallelRes.blob);
+          completeJob({
+            id: `res-${Date.now()}`,
+            fileName: parallelRes.fileName,
+            mimeType: parallelRes.mimeType,
+            size: parallelRes.blob.size,
+            blob: parallelRes.blob,
+            objectUrl,
+            createdAt: Date.now(),
+            elapsedMs: parallelRes.elapsedMs,
+            commandPreview: parallelRes.commandPreview,
+            taskType: config.taskType,
+          });
+          setPreviewMode('output');
+          showToast(
+            `${t('export.resultReady')} (${parallelCheck.chunkCount}x): ${parallelRes.fileName}`
+          );
+          return;
+        } catch (pErr) {
+          parallelAbortRef.current = null;
+          if (pErr instanceof Error && pErr.message === 'CANCELLED') {
+            throw pErr;
+          }
+          appendLog(
+            `[Parallel Pool] Fallback to single worker: ${pErr instanceof Error ? pErr.message : String(pErr)}`
+          );
+        }
+      }
+
+      // 3. Hardware-Tuned Single Worker FFmpeg.wasm (MT when COI/SAB active, fast input seek + preset)
+      appendLog(`[Tuning] Active profile: ${tuning.badgeLabel}`);
       const { blob, elapsedMs } = await ffmpegClient.runCommand({
         plan,
         onProgress: (pct, elapsed, eta) => updateProgress(pct, elapsed, eta),
@@ -336,6 +415,7 @@ export function App() {
       }
     } finally {
       hwAbortRef.current = null;
+      parallelAbortRef.current = null;
       await wakeLockService.release();
     }
   };
@@ -343,12 +423,12 @@ export function App() {
   const handleCancel = async () => {
     hwAbortRef.current?.abort();
     hwAbortRef.current = null;
+    parallelAbortRef.current?.abort();
+    parallelAbortRef.current = null;
     ffmpegClient.cancelActiveJob();
     await wakeLockService.release();
     showToast(t('progress.cancel'));
   };
-
-  const isBusy = wasmStatus === 'loading' || wasmStatus === 'running';
 
   return (
     <div className="app-shell">
@@ -395,65 +475,55 @@ export function App() {
 
       <Footer />
 
-      {source && (
-        <div className="mobile-action-dock" role="region" aria-label="Mobile quick actions">
-          <button
-            type="button"
-            className="btn"
-            style={{ flex: 1 }}
-            onClick={() => setMobileSheetOpen(true)}
-          >
-            {t('header.modeAdvanced')}
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            style={{ flex: 1.4 }}
-            disabled={isBusy}
-            onClick={handleExecute}
-          >
-            {config.taskType === 'audio-extract'
-              ? t('export.runAudioBtn')
-              : config.taskType === 'snapshot'
-                ? t('export.runSnapshotBtn')
-                : t('export.runBtn')}
-          </button>
-        </div>
-      )}
+      {source && <MobileToolDock onExecute={handleExecute} />}
 
+      {/* Non-blocking half-height / expandable sheet on Phone Portrait (Video Preview stays live above!) */}
       {source && mobileSheetOpen && (
-        <div
-          className="mobile-sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Mobile settings menu"
-          onClick={() => setMobileSheetOpen(false)}
+        <section
+          className={`mobile-sheet-panel ${sheetExpanded ? 'expanded' : ''}`}
+          role="region"
+          aria-label="Mobile tool settings"
         >
-          <div className="mobile-sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="mobile-sheet-handle" />
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '4px 16px 8px',
-                borderBottom: '1px solid var(--border-subtle)',
-              }}
-            >
-              <strong>{t('header.modeAdvanced')}</strong>
+          <div
+            className="mobile-sheet-handle"
+            role="button"
+            tabIndex={0}
+            aria-label={sheetExpanded ? t('mobile.half') : t('mobile.expand')}
+            onClick={() => setSheetExpanded((prev) => !prev)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setSheetExpanded((prev) => !prev);
+              }
+            }}
+          />
+          <div className="mobile-sheet-header">
+            <strong style={{ fontSize: '0.92rem' }}>
+              {t(`tab.${activeTab}` as TranslationKey)}
+            </strong>
+            <div style={{ display: 'flex', gap: 6 }}>
               <button
                 type="button"
                 className="btn btn-sm"
+                style={{ minHeight: 34, padding: '4px 10px' }}
+                onClick={() => setSheetExpanded((prev) => !prev)}
+              >
+                {sheetExpanded ? t('mobile.half') : t('mobile.expand')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ minHeight: 34, padding: '4px 10px' }}
                 onClick={() => setMobileSheetOpen(false)}
               >
-                ✕
+                ✕ {t('mobile.close')}
               </button>
             </div>
-            <div className="mobile-sheet-body">
-              <SettingsPanels />
-            </div>
           </div>
-        </div>
+          <div className="mobile-sheet-body">
+            <SettingsPanels hideTabBar />
+          </div>
+        </section>
       )}
 
       <ProgressModal onCancel={handleCancel} />

@@ -18,7 +18,7 @@
 - **Version**: `0.12.10`
 - **License**: GNU General Public License v2.0 or later (`GPL-2.0-or-later`)
 - **Repository**: https://github.com/ffmpegwasm/ffmpeg.wasm-core / https://ffmpeg.org/
-- **Usage**: 動画・音声のデコード、フィルタ処理、エンコード、静止画書き出しを行う WebAssembly バイナリ（`public/vendor/ffmpeg-core/` / COOP+COEP 環境では `@ffmpeg/core-mt` を自動利用）
+- **Usage**: 動画・音声のデコード、フィルタ処理、エンコード、静止画書き出しを行う WebAssembly バイナリ（`public/vendor/ffmpeg-core/` および `public/vendor/ffmpeg-core-mt/`。COOP+COEP / COI Service Worker 環境では `@ffmpeg/core-mt` を自動利用）
 - **Included Codecs & Libraries**:
   - `libx264` (GPL-2.0-or-later)
   - `libx265` (GPL-2.0-or-later)

@@ -48,6 +48,15 @@
   - 回転・反転・クロップ、MP3/AAC/WAV/FLAC/Opus 音声抽出、ミュート、PNG/JPEG 静止画書き出し、メタデータ削除
   - JSON 設定保存/読込、Undo/Redo、PC ショートカット、PWA インストール案内＆オフライン動作（アプリシェル + WASM コアキャッシュ）
 
+- **端末性能に応じた高速化 & 並列チャンク処理**
+  - **COI Service Worker（GitHub Pages マルチスレッド対応）**: Service Worker（`public/sw.js`）で COOP / COEP ヘッダーをクライアント側注入し、GitHub Pages 静的公開でも `SharedArrayBuffer` 経由の **マルチスレッド版（`@ffmpeg/core-mt`）** を自動有効化
+  - **並列チャンクワーカープール**: CPU コア数・RAM が十分な端末で 16 秒以上の動画を最大 2〜4 個の独立 FFmpeg Worker へ均等分割し、同時並列エンコード後に無劣化結合（`-f concat -c copy`）
+  - **ハードウェア適応チューニング**: 端末性能に応じて `-threads`、`ultrafast` / `superfast`、`-tune fastdecode`、VP9 `-row-mt 1 -tile-columns 2`、高速入力シーク（`-ss` / `-t` を `-i` の前に配置）を自動最適化
+- **スマホ・タブレット縦横画面最適化 UI**
+  - **スマホ縦画面**: 動画プレビューを上部に常時固定（Sticky）し、下部アイコンツールバー＋プレビューを遮らない半画面／拡大ボトムシートで編集可能
+  - **スマホ横画面 / タブレット横画面**: 専用の左右2ペイン・スタジオレイアウト（左にプレビュー＋タイムライン、右に設定＋書き出し）とセーフエリア（ノッチ）対応
+  - 1行コンパクトヘッダー（オーバーフロードロワー）＋折りたたみメタデータバーにより表示領域を最大化
+
 ---
 
 ## ローカル開発・ビルド手順
@@ -56,7 +65,7 @@
 # 1. 依存関係のインストール
 npm install
 
-# 2. FFmpeg WASM コアを public/vendor/ へ同期（dev/build 時に自動実行されます）
+# 2. FFmpeg WASM コア（ST + MT 両方）を public/vendor/ へ同期（dev/build 時に自動実行されます）
 npm run sync-vendor
 
 # 3. 開発サーバー起動（COOP/COEP ヘッダー自動付与 → マルチスレッド動作確認可）
@@ -71,15 +80,15 @@ npm run build
 
 ---
 
-## デプロイ手順 & COOP/COEP ヘッダー設定
+## デプロイ手順 & COOP/COEP マルチスレッド対応
 
-### GitHub Pages（標準・自動デプロイ対応）
+### GitHub Pages（標準・自動デプロイ・COI Service Worker で MT 対応）
 `.github/workflows/main.yml` を同梱しています。リポジトリの **Settings → Pages → Source** を **GitHub Actions** に設定して `main` ブランチへ push するだけで自動ビルド＆公開されます。
 
-- GitHub Pages ではカスタム HTTP ヘッダー（COOP/COEP）が設定できないため、自動的に **シングルスレッド版（`@ffmpeg/core`）** へフォールバックして安定動作します。
+- 同梱の Service Worker（`public/sw.js`）がレスポンスへ `Cross-Origin-Opener-Policy: same-origin` / `Cross-Origin-Embedder-Policy: require-corp` を自動付与するため、**GitHub Pages 上でも `@ffmpeg/core-mt`（マルチスレッド版）および並列チャンクワーカーが動作**します（非対応ブラウザでは自動的にシングルスレッド版へフォールバックします）。
 
-### Cloudflare Pages / Netlify（マルチスレッド高速化対応）
-`public/_headers` を同梱しているため、Cloudflare Pages 等へ `dist/` をデプロイすると以下のヘッダーが自動適用され、`SharedArrayBuffer` 経由で **マルチスレッド版（`@ffmpeg/core-mt`）** が自動有効化されます。
+### Cloudflare Pages / Netlify
+`public/_headers` も同梱しているため、Cloudflare Pages 等へ `dist/` をデプロイすると初回アクセスから直接 HTTP ヘッダーで `SharedArrayBuffer` / `@ffmpeg/core-mt` が有効化されます。
 
 ```text
 /*

@@ -611,58 +611,197 @@
   word-break: break-all;
 }
 
-/* Mobile Action Dock & Bottom Sheet */
-.mobile-action-dock {
+/* Compact Metadata Strip for Mobile & Tablet */
+.meta-compact-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  text-align: left;
+  min-height: 44px;
+}
+
+.meta-compact-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.meta-compact-name {
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+/* CapCut-style Mobile Portrait Bottom Icon Tool Dock */
+.mobile-tool-dock {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 40;
-  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
-  backdrop-filter: blur(12px);
+  z-index: 42;
+  background: color-mix(in srgb, var(--bg-surface) 97%, transparent);
+  backdrop-filter: blur(14px);
   border-top: 1px solid var(--border-default);
-  padding: 8px max(12px, var(--safe-right)) calc(8px + var(--safe-bottom)) max(12px, var(--safe-left));
+  padding: 6px max(8px, var(--safe-right)) calc(6px + var(--safe-bottom)) max(8px, var(--safe-left));
   display: flex;
   align-items: center;
   gap: 8px;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
 }
 
-.mobile-sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(0, 0, 0, 0.56);
+.mobile-dock-scroll {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  flex: 1;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-.mobile-sheet {
-  width: 100%;
-  max-height: 82dvh;
+.mobile-dock-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-dock-item {
+  flex-shrink: 0;
+  min-width: 56px;
+  min-height: 48px;
+  padding: 5px 7px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mobile-dock-item svg {
+  width: 19px;
+  height: 19px;
+}
+
+.mobile-dock-item.active {
+  background: var(--accent-primary-soft);
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  color: var(--accent-primary);
+}
+
+.mobile-dock-cta {
+  flex-shrink: 0;
+  min-height: 48px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Non-blocking Half-Height / Expandable Bottom Sheet (keeps Video Preview visible above!) */
+.mobile-sheet-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(60px + var(--safe-bottom));
+  z-index: 41;
+  height: 48dvh;
+  max-height: calc(100dvh - 110px);
   background: var(--bg-surface);
   border-top-left-radius: 18px;
   border-top-right-radius: 18px;
   border-top: 1px solid var(--border-strong);
   display: flex;
   flex-direction: column;
-  padding-bottom: var(--safe-bottom);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.52);
+  transition: height 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.mobile-sheet-panel.expanded {
+  height: 78dvh;
+}
+
+.mobile-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
 }
 
 .mobile-sheet-handle {
-  width: 44px;
-  height: 5px;
+  width: 40px;
+  height: 4px;
   border-radius: 99px;
   background: var(--border-strong);
-  margin: 10px auto 4px;
+  margin: 7px auto 2px;
+  flex-shrink: 0;
 }
 
 .mobile-sheet-body {
   overflow-y: auto;
-  padding: 12px 14px 20px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 10px 12px 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  flex: 1;
+}
+
+/* Slide-over Overflow Drawer for Compact Header (Mobile & Tablet) */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  background: rgba(5, 7, 10, 0.62);
+  backdrop-filter: blur(3px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer-panel {
+  width: min(320px, 86vw);
+  height: 100%;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-strong);
+  padding: calc(14px + var(--safe-top)) max(14px, var(--safe-right)) calc(18px + var(--safe-bottom)) 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+}
+
+.drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Modal / Progress Overlay */

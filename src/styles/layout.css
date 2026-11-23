@@ -8,8 +8,8 @@
 .app-header {
   position: sticky;
   top: 0;
-  z-index: 30;
-  background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  z-index: 35;
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -17,24 +17,25 @@
 .header-inner {
   max-width: 1480px;
   margin: 0 auto;
-  padding: 10px max(16px, var(--safe-left)) 10px max(16px, var(--safe-right));
+  min-height: 52px;
+  padding: 6px max(12px, var(--safe-right)) 6px max(12px, var(--safe-left));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 9px;
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .brand-mark {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   border-radius: var(--radius-md);
   background: var(--accent-primary-soft);
   border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
@@ -45,8 +46,8 @@
 }
 
 .brand-mark svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
 }
 
 .brand-text {
@@ -55,26 +56,49 @@
 
 .brand-title {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: -0.01em;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 
 .brand-subtitle {
   margin: 0;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.header-actions {
+/* Desktop full toolbar vs Mobile/Tablet single-row compact actions */
+.header-actions-desktop {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.header-actions-compact {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 1119px) {
+  .header-actions-desktop {
+    display: none;
+  }
+
+  .header-actions-compact {
+    display: flex;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
 }
 
 .app-main {
@@ -82,16 +106,23 @@
   width: 100%;
   max-width: 1480px;
   margin: 0 auto;
-  padding: 16px max(16px, var(--safe-right)) 32px max(16px, var(--safe-left));
+  padding: 14px max(14px, var(--safe-right)) 32px max(14px, var(--safe-left));
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
-/* Workspace Multi-Pane Grid (PC >= 1024px) */
+/* ============================================================================
+   ADAPTIVE MULTI-ORIENTATION STUDIO LAYOUT
+   1. Desktop (>= 1024px) & Tablet Landscape (>= 768px landscape): 2-Pane Split
+   2. Phone Landscape (landscape & max-height: 560px): Side-by-Side 2-Pane Split
+   3. Tablet Portrait (768px..1023px portrait): Vertical Studio
+   4. Phone Portrait (< 768px portrait): Sticky Preview + CapCut-style Bottom Dock + Half Sheet
+   ============================================================================ */
+
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.38fr) minmax(350px, 0.92fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.92fr);
   gap: 16px;
   align-items: start;
 }
@@ -99,48 +130,202 @@
 .workspace-left {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
 }
 
 .workspace-right {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
   position: sticky;
-  top: 74px;
+  top: 64px;
+  max-height: calc(100dvh - 78px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
-/* Tablet & Mobile responsive collapse */
-@media (max-width: 1023px) {
+/* Tablet Landscape (iPad / Android tablets in horizontal mode) */
+@media (min-width: 768px) and (max-width: 1199px) and (orientation: landscape) {
+  .workspace-grid {
+    grid-template-columns: minmax(0, 1.18fr) minmax(310px, 0.92fr);
+    gap: 12px;
+  }
+
+  .app-main {
+    padding: 10px max(12px, var(--safe-right)) 20px max(12px, var(--safe-left));
+    gap: 10px;
+  }
+
+  .preview-stage,
+  .preview-video {
+    max-height: 46dvh;
+  }
+}
+
+/* Tablet Portrait (iPad / Android tablets in vertical mode) */
+@media (min-width: 768px) and (max-width: 1023px) and (orientation: portrait) {
   .workspace-grid {
     grid-template-columns: 1fr;
+    gap: 12px;
   }
 
   .workspace-right {
     position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .preview-stage,
+  .preview-video {
+    max-height: 38dvh;
   }
 }
 
-@media (max-width: 767px) {
-  .app-main {
-    padding: 12px max(12px, var(--safe-right)) calc(92px + var(--safe-bottom)) max(12px, var(--safe-left));
-    gap: 12px;
+/* Phone Landscape (iPhone / Android phones rotated horizontally) */
+@media (orientation: landscape) and (max-height: 560px) {
+  .header-inner {
+    min-height: 42px;
+    padding-top: 4px;
+    padding-bottom: 4px;
   }
 
-  .brand-subtitle {
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+  }
+
+  .brand-title {
+    font-size: 0.9rem;
+  }
+
+  .app-main {
+    padding: 8px max(12px, var(--safe-right)) 16px max(12px, var(--safe-left));
+    gap: 8px;
+  }
+
+  .workspace-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.12fr) minmax(230px, 0.88fr);
+    gap: 10px;
+    align-items: start;
+  }
+
+  .workspace-left {
+    position: sticky;
+    top: 48px;
+    gap: 8px;
+  }
+
+  .workspace-right {
+    display: flex !important;
+    position: static;
+    max-height: calc(100dvh - 60px);
+    overflow-y: auto;
+    gap: 8px;
+  }
+
+  .preview-panel-sticky {
+    padding: 8px;
+  }
+
+  .preview-stage {
+    min-height: 135px;
+    max-height: calc(100dvh - 175px);
+  }
+
+  .preview-video {
+    max-height: calc(100dvh - 175px);
+  }
+
+  .preview-transport {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .preview-transport::-webkit-scrollbar {
     display: none;
+  }
+
+  .transport-group {
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+  }
+
+  .mobile-tool-dock,
+  .mobile-sheet-panel,
+  .mobile-inline-export {
+    display: none !important;
+  }
+}
+
+/* Phone Portrait (Vertical smartphone: sticky video preview + CapCut-style tool dock + live half sheet) */
+@media (max-width: 767px) and (orientation: portrait) {
+  .header-inner {
+    min-height: 48px;
+    padding: 6px max(10px, var(--safe-right)) 6px max(10px, var(--safe-left));
+  }
+
+  .app-main {
+    padding: 8px max(10px, var(--safe-right)) calc(84px + var(--safe-bottom)) max(10px, var(--safe-left));
+    gap: 10px;
+  }
+
+  .workspace-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .workspace-left {
+    gap: 10px;
   }
 
   .workspace-right-desktop {
     display: none;
   }
+
+  /* Keep preview visible at top while bottom sheet is open! */
+  .preview-panel-sticky {
+    position: sticky;
+    top: 49px;
+    z-index: 20;
+    padding: 10px;
+  }
+
+  .preview-stage {
+    min-height: 165px;
+    max-height: 30dvh;
+  }
+
+  .preview-video {
+    max-height: 30dvh;
+  }
+
+  .preview-transport {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-top: 8px;
+  }
+
+  .preview-transport::-webkit-scrollbar {
+    display: none;
+  }
+
+  .transport-group {
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+  }
 }
 
-@media (min-width: 768px) {
-  .mobile-action-dock,
-  .mobile-sheet-backdrop,
+/* Hide mobile-only portrait widgets on desktop, tablet, and all landscape viewports */
+@media (min-width: 768px), (orientation: landscape) {
+  .mobile-tool-dock,
+  .mobile-sheet-panel,
   .mobile-inline-export {
     display: none !important;
   }

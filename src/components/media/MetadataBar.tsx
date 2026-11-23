@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DEVICE_LIMITS } from '../../config/deviceLimits';
 import { translate } from '../../i18n';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -7,6 +8,8 @@ import { formatBytes, formatTimecode } from '../../utils/formatters';
 export function MetadataBar() {
   const { lang, device } = useUiStore();
   const { source, isProbing } = useProjectStore();
+  const [expanded, setExpanded] = useState(device.tier === 'pc');
+
   if (!source) return null;
 
   const { metadata } = source;
@@ -54,10 +57,43 @@ export function MetadataBar() {
     warnings.push(t('device.warnRotated', { deg: metadata.rotation }));
   }
 
+  const resShort = metadata.isAudioOnly
+    ? t('meta.audioOnly')
+    : metadata.width > 0
+      ? `${metadata.width}×${metadata.height}`
+      : '—';
+
+  // Mobile & Tablet compact collapsible bar saves ~220px of vertical space!
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        className="meta-compact-bar"
+        onClick={() => setExpanded(true)}
+        aria-expanded={false}
+      >
+        <div className="meta-compact-summary">
+          <span className="meta-compact-name mono">{metadata.fileName}</span>
+          <span className="mono">{resShort}</span>
+          <span className="mono">{formatBytes(metadata.fileSize)}</span>
+          {isProbing && <span className="pill pill-info">{t('meta.probing')}</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {warnings.length > 0 && (
+            <span className="pill pill-primary">
+              ⚠ {t('mobile.warningsCount', { count: warnings.length })}
+            </span>
+          )}
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>▾</span>
+        </div>
+      </button>
+    );
+  }
+
   return (
     <section className="panel" aria-label="Media Metadata">
       <div className="panel-header">
-        <div>
+        <div style={{ minWidth: 0 }}>
           <h2 className="panel-title mono" style={{ wordBreak: 'break-all' }}>
             {metadata.fileName}
           </h2>
@@ -66,19 +102,23 @@ export function MetadataBar() {
             {metadata.bitrateKbps ? ` · ${metadata.bitrateKbps} kbps` : ''}
           </p>
         </div>
-        {isProbing && <span className="pill pill-info">{t('meta.probing')}</span>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {isProbing && <span className="pill pill-info">{t('meta.probing')}</span>}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => setExpanded(false)}
+            aria-expanded={true}
+          >
+            ▴
+          </button>
+        </div>
       </div>
 
       <div className="meta-grid">
         <div className="meta-cell">
           <span className="meta-label">{t('meta.resolution')}</span>
-          <span className="meta-value mono">
-            {metadata.isAudioOnly
-              ? t('meta.audioOnly')
-              : metadata.width > 0
-                ? `${metadata.width}×${metadata.height}`
-                : '—'}
-          </span>
+          <span className="meta-value mono">{resShort}</span>
         </div>
 
         <div className="meta-cell">

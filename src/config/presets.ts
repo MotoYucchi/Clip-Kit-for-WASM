@@ -234,6 +234,8 @@ export const SPEED_PRESETS = [0.25, 0.5, 1, 1.5, 2, 4] as const;
 export function createDefaultEditConfig(): EditConfig {
   return {
     taskType: 'video',
+    speedProfile: 'auto',
+    enableParallelChunks: true,
     container: 'mp4',
     videoCodec: 'h264',
     audioCodec: 'aac',

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { buildFullFFmpegCommand } from '../../engine/commandBuilder';
+import { evaluateParallelChunkEligibility } from '../../engine/parallelEncoder';
+import { computePerformanceTuning } from '../../engine/performanceTuner';
 import { estimateOutputSize } from '../../engine/sizeEstimator';
 import { translate } from '../../i18n';
 import { saveExportedBlob } from '../../services/exportService';
@@ -29,12 +31,18 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
     subtitleFontFile,
     config,
   } = useProjectStore();
-  const { wasmStatus, latestResult, errorMessage } = useJobStore();
+  const { wasmStatus, wasmMode, latestResult, errorMessage } = useJobStore();
   const { setPreviewMode } = usePlaybackStore();
   const [showCommand, setShowCommand] = useState(false);
 
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(lang, key, params);
+
+  const tuning = useMemo(
+    () =>
+      computePerformanceTuning(device, config.speedProfile, wasmMode, config.enableParallelChunks),
+    [device, config.speedProfile, wasmMode, config.enableParallelChunks]
+  );
 
   const estimate = useMemo(() => {
     if (!source || clips.length === 0) return null;
@@ -60,6 +68,7 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
       pipHasAudio,
       subtitleFile,
       subtitleFontFile,
+      tuning,
     });
   }, [
     source,
@@ -73,6 +82,7 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
     subtitleFile,
     subtitleFontFile,
     config,
+    tuning,
   ]);
 
   if (!source || clips.length === 0 || !estimate || !commandPlan) return null;
@@ -86,6 +96,15 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
       audioTracks,
       device.supportsWebCodecs
     ).eligible;
+
+  const parallelCheck = evaluateParallelChunkEligibility(
+    source.metadata,
+    config,
+    clips,
+    audioTracks,
+    tuning
+  );
+  const parallelActive = !hwActive && !commandPlan.usedStreamCopy && parallelCheck.eligible;
 
   const isBusy = wasmStatus === 'loading' || wasmStatus === 'running';
 
@@ -135,6 +154,16 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {hwActive && <span className="pill pill-info">WebCodecs HW</span>}
+          {parallelActive && (
+            <span className="pill pill-success">
+              {lang === 'ja'
+                ? `並列 ${parallelCheck.chunkCount}ワーカー`
+                : `Parallel ${parallelCheck.chunkCount}x`}
+            </span>
+          )}
+          {!hwActive && !parallelActive && !commandPlan.usedStreamCopy && (
+            <span className="pill pill-info">{tuning.badgeLabel}</span>
+          )}
           <span
             className={`pill ${
               commandPlan.usedStreamCopy
