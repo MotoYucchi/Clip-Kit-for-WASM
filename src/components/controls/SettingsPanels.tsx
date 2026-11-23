@@ -5,8 +5,10 @@ import {
   COMPRESSION_PRESETS,
   RESOLUTION_PRESET_HEIGHTS,
   SPEED_PRESETS,
+  USE_CASE_PRESETS,
 } from '../../config/presets';
-import { computeOutputDimensions } from '../../engine/filterGraphBuilder';
+import { computeTargetVideoBitrateKbps } from '../../engine/commandBuilder';
+import { buildFullFilterGraph, computeOutputDimensions } from '../../engine/filterGraphBuilder';
 import { translate, type TranslationKey } from '../../i18n';
 import { usePlaybackStore } from '../../store/usePlaybackStore';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -17,13 +19,18 @@ import type {
   AudioCodec,
   AudioExtractFormat,
   CompressionPreset,
+  FpsPreset,
   MuteMode,
   OutputContainer,
+  RateControlMode,
   ResolutionPreset,
   RotationDegrees,
   ScaleAlgorithm,
+  SpeedScope,
+  UseCasePresetId,
   VideoCodec,
 } from '../../types/edit';
+import { MultiTrackAudioPanel } from './MultiTrackAudioPanel';
 
 const TABS: { id: ControlTab; labelKey: TranslationKey; videoOnly?: boolean }[] = [
   { id: 'output', labelKey: 'tab.output' },
@@ -32,13 +39,23 @@ const TABS: { id: ControlTab; labelKey: TranslationKey; videoOnly?: boolean }[] 
   { id: 'speed', labelKey: 'tab.speed' },
   { id: 'transform', labelKey: 'tab.transform', videoOnly: true },
   { id: 'audio', labelKey: 'tab.audio' },
+  { id: 'multitrack', labelKey: 'tab.multitrack', videoOnly: true },
+  { id: 'compat', labelKey: 'tab.compat', videoOnly: true },
   { id: 'snapshot', labelKey: 'tab.snapshot', videoOnly: true },
 ];
 
 export function SettingsPanels() {
   const { lang, device, activeTab, setActiveTab } = useUiStore();
-  const { source, clips, config, compatNoticeKeys, updateConfig, updateTrimRange } =
-    useProjectStore();
+  const {
+    source,
+    clips,
+    selectedClipId,
+    audioTracks,
+    config,
+    compatNoticeKeys,
+    updateConfig,
+    updateTrimRange,
+  } = useProjectStore();
   const { currentTime } = usePlaybackStore();
 
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
@@ -47,12 +64,13 @@ export function SettingsPanels() {
   if (!source) return null;
 
   const { metadata } = source;
-  const clip = clips[0];
+  const activeClip = clips.find((c) => c.id === selectedClipId) ?? clips[0];
   const isAudioOnly = metadata.isAudioOnly;
   const visibleTabs = TABS.filter((tab) => !(isAudioOnly && tab.videoOnly));
   const safeTab = visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : 'output';
 
   const cap4k = getFeatureCapability('export_4k', device);
+  const capTwoPass = getFeatureCapability('two_pass', device);
   const capH265 = getFeatureCapability('codec_h265', device);
   const capAv1 = getFeatureCapability('codec_av1', device);
   const capBlur = getFeatureCapability('blur_background', device);
@@ -61,6 +79,39 @@ export function SettingsPanels() {
 
   const outDims = computeOutputDimensions(metadata, config);
   const containerSpec = CONTAINER_SPECS[config.container];
+
+  const graphSummary = buildFullFilterGraph({
+    primaryMetadata: metadata,
+    clips,
+    selectedClipId,
+    audioTracks,
+    config,
+  });
+
+  const computedTargetKbps =
+    config.rateControlMode === 'targetSize'
+      ? computeTargetVideoBitrateKbps(
+          config.targetSizeMB,
+          graphSummary.effectiveDurationSec,
+          config.audioBitrateKbps,
+          metadata.hasAudio && config.muteMode !== 'all'
+        )
+      : null;
+
+  const handleUseCaseChange = (presetId: UseCasePresetId) => {
+    if (presetId === 'none') {
+      updateConfig({ useCasePreset: 'none' });
+      return;
+    }
+    const spec = USE_CASE_PRESETS.find((p) => p.id === presetId);
+    if (!spec) return;
+    const patch = { ...spec.patch };
+    // Auto-enable 2-pass for Discord target size presets on PC/Tablet
+    if (patch.rateControlMode === 'targetSize' && capTwoPass.status !== 'disabled') {
+      patch.enableTwoPass = true;
+    }
+    updateConfig(patch);
+  };
 
   return (
     <section className="panel" aria-label="Editing Settings">
@@ -76,6 +127,7 @@ export function SettingsPanels() {
             onClick={() => setActiveTab(tab.id)}
           >
             {t(tab.labelKey)}
+            {tab.id === 'multitrack' && audioTracks.length > 0 ? ` (${audioTracks.length})` : ''}
           </button>
         ))}
       </div>
@@ -93,7 +145,7 @@ export function SettingsPanels() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 }}>
         {/* ================================================================
-            TAB 1: OUTPUT FORMAT, CODEC & COMPRESSION
+            TAB 1: OUTPUT FORMAT, USE-CASE PRESETS, CODEC & RATE CONTROL
            ================================================================ */}
         {safeTab === 'output' && (
           <>
@@ -133,6 +185,26 @@ export function SettingsPanels() {
 
             {config.taskType === 'video' && (
               <>
+                {/* Platform / Use-Case Presets (YouTube, TikTok, Instagram, X, Discord 10MB/25MB) */}
+                <div className="field-group">
+                  <label className="field-label" htmlFor="sel-usecase">
+                    {t('output.useCaseHeading')}
+                  </label>
+                  <select
+                    id="sel-usecase"
+                    className="select-control"
+                    value={config.useCasePreset}
+                    onChange={(e) => handleUseCaseChange(e.target.value as UseCasePresetId)}
+                  >
+                    <option value="none">{t('output.useCaseNone')}</option>
+                    {USE_CASE_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label} — {lang === 'ja' ? p.descJa : p.descEn}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="field-row">
                   <div className="field-group">
                     <label className="field-label" htmlFor="sel-container">
@@ -187,7 +259,6 @@ export function SettingsPanels() {
                   </div>
                 </div>
 
-                {/* Device/Core Codec Reason Notes */}
                 {capH265.status !== 'supported' && capH265.reasonKey && (
                   <p className="field-hint">
                     H.265: {t(capH265.reasonKey as TranslationKey, { mem: device.deviceMemoryGB })}
@@ -243,9 +314,38 @@ export function SettingsPanels() {
                   </div>
                 </div>
 
-                {/* Compression Presets */}
+                {/* Rate Control Mode Switcher */}
                 <div className="field-group">
-                  <span className="field-label">{t('output.compression')}</span>
+                  <span className="field-label">{t('output.rateModeHeading')}</span>
+                  <div className="segmented" style={{ width: '100%' }}>
+                    {(
+                      [
+                        ['preset', 'output.ratePreset'],
+                        ['crf', 'output.rateCrf'],
+                        ['bitrate', 'output.rateBitrate'],
+                        ['targetSize', 'output.rateTargetSize'],
+                      ] as Array<[RateControlMode, TranslationKey]>
+                    ).map(([mode, labelKey]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        style={{ flex: 1, padding: '6px 6px' }}
+                        className={`segmented-btn ${config.rateControlMode === mode ? 'active' : ''}`}
+                        onClick={() =>
+                          updateConfig({
+                            rateControlMode: mode,
+                            useCustomCrf: mode === 'crf',
+                          })
+                        }
+                      >
+                        {t(labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Mode 1: Preset */}
+                {config.rateControlMode === 'preset' && (
                   <div className="preset-grid">
                     {(Object.keys(COMPRESSION_PRESETS) as CompressionPreset[]).map((presetId) => {
                       const spec = COMPRESSION_PRESETS[presetId];
@@ -254,7 +354,7 @@ export function SettingsPanels() {
                           key={presetId}
                           type="button"
                           className={`preset-card ${
-                            !config.useCustomCrf && config.compressionPreset === presetId ? 'active' : ''
+                            config.compressionPreset === presetId ? 'active' : ''
                           }`}
                           onClick={() =>
                             updateConfig({
@@ -274,37 +374,116 @@ export function SettingsPanels() {
                       );
                     })}
                   </div>
-                </div>
+                )}
 
-                {/* Custom CRF */}
-                <div className="field-group">
-                  <label className="checkbox-row">
+                {/* Mode 2: CRF */}
+                {config.rateControlMode === 'crf' && (
+                  <div className="field-group">
+                    <div className="field-label">
+                      <span>CRF</span>
+                      <span className="mono">{config.customCrf}</span>
+                    </div>
                     <input
-                      type="checkbox"
-                      checked={config.useCustomCrf}
-                      onChange={(e) => updateConfig({ useCustomCrf: e.target.checked })}
+                      type="range"
+                      min={16}
+                      max={40}
+                      step={1}
+                      className="range-control"
+                      value={config.customCrf}
+                      onChange={(e) =>
+                        updateConfig({ customCrf: Number(e.target.value), useCustomCrf: true })
+                      }
                     />
-                    <span>{t('output.customCrf')}</span>
-                  </label>
-                  {config.useCustomCrf && (
-                    <>
-                      <div className="field-label">
-                        <span>CRF</span>
-                        <span className="mono">{config.customCrf}</span>
+                    <p className="field-hint">{t('output.crfHint')}</p>
+                  </div>
+                )}
+
+                {/* Mode 3: Video Bitrate */}
+                {config.rateControlMode === 'bitrate' && (
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="inp-vbitrate">
+                      <span>{t('output.targetBitrateKbps')}</span>
+                      <span className="mono">{config.targetVideoBitrateKbps} kbps</span>
+                    </label>
+                    <input
+                      id="inp-vbitrate"
+                      type="number"
+                      min={150}
+                      max={30000}
+                      step={100}
+                      className="input-control mono"
+                      value={config.targetVideoBitrateKbps}
+                      onChange={(e) =>
+                        updateConfig({
+                          targetVideoBitrateKbps: Math.max(150, Number(e.target.value) || 1000),
+                        })
+                      }
+                    />
+                  </div>
+                )}
+
+                {/* Mode 4: Target File Size (e.g. Discord 10MB / 25MB) */}
+                {config.rateControlMode === 'targetSize' && (
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="inp-targetmb">
+                      <span>{t('output.targetSizeMB')}</span>
+                      <span className="mono">{config.targetSizeMB} MB</span>
+                    </label>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {[8, 9.5, 24, 50, 100].map((mb) => (
+                        <button
+                          key={mb}
+                          type="button"
+                          className={`btn btn-sm mono ${Math.abs(config.targetSizeMB - mb) < 0.05 ? 'btn-primary' : ''}`}
+                          onClick={() => updateConfig({ targetSizeMB: mb })}
+                        >
+                          {mb} MB
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      id="inp-targetmb"
+                      type="number"
+                      min={1}
+                      max={4000}
+                      step={0.5}
+                      className="input-control mono"
+                      value={config.targetSizeMB}
+                      onChange={(e) =>
+                        updateConfig({
+                          targetSizeMB: Math.max(1, Number(e.target.value) || 10),
+                        })
+                      }
+                    />
+                    {computedTargetKbps !== null && (
+                      <div className="alert-banner alert-info">
+                        <span>{t('output.computedVideoBitrate')}</span>
+                        <strong className="mono">{computedTargetKbps} kbps</strong>
                       </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 2-Pass Toggle (for Bitrate / Target Size) */}
+                {(config.rateControlMode === 'bitrate' ||
+                  config.rateControlMode === 'targetSize') && (
+                  <div className="field-group">
+                    <label className="checkbox-row">
                       <input
-                        type="range"
-                        min={16}
-                        max={40}
-                        step={1}
-                        className="range-control"
-                        value={config.customCrf}
-                        onChange={(e) => updateConfig({ customCrf: Number(e.target.value) })}
+                        type="checkbox"
+                        checked={config.enableTwoPass && capTwoPass.status !== 'disabled'}
+                        disabled={capTwoPass.status === 'disabled'}
+                        onChange={(e) => updateConfig({ enableTwoPass: e.target.checked })}
                       />
-                      <p className="field-hint">{t('output.crfHint')}</p>
-                    </>
-                  )}
-                </div>
+                      <span>{t('output.enableTwoPass')}</span>
+                    </label>
+                    {capTwoPass.status === 'disabled' && capTwoPass.reasonKey ? (
+                      <p className="field-hint">{t(capTwoPass.reasonKey as TranslationKey)}</p>
+                    ) : (
+                      <p className="field-hint">{t('output.twoPassHint')}</p>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -326,12 +505,13 @@ export function SettingsPanels() {
         {/* ================================================================
             TAB 2: TRIM / CUT
            ================================================================ */}
-        {safeTab === 'trim' && clip && (
+        {safeTab === 'trim' && activeClip && (
           <>
             <label className="checkbox-row">
               <input
                 type="checkbox"
-                checked={config.trimEnabled}
+                checked={config.trimEnabled || clips.length > 1}
+                disabled={clips.length > 1}
                 onChange={(e) => updateConfig({ trimEnabled: e.target.checked })}
               />
               <span>{t('timeline.enableTrim')}</span>
@@ -346,13 +526,13 @@ export function SettingsPanels() {
                   id="panel-trim-start"
                   type="number"
                   min={0}
-                  max={Math.max(0, clip.endSec - 0.1)}
+                  max={Math.max(0, activeClip.endSec - 0.1)}
                   step={0.1}
                   className="input-control mono"
-                  value={Number(clip.startSec.toFixed(2))}
+                  value={Number(activeClip.startSec.toFixed(2))}
                   onChange={(e) => {
                     updateConfig({ trimEnabled: true });
-                    updateTrimRange(Number(e.target.value), clip.endSec);
+                    updateTrimRange(Number(e.target.value), activeClip.endSec, activeClip.id);
                   }}
                 />
               </div>
@@ -363,40 +543,42 @@ export function SettingsPanels() {
                 <input
                   id="panel-trim-end"
                   type="number"
-                  min={clip.startSec + 0.1}
+                  min={activeClip.startSec + 0.1}
                   max={Number(metadata.durationSec.toFixed(2))}
                   step={0.1}
                   className="input-control mono"
-                  value={Number(clip.endSec.toFixed(2))}
+                  value={Number(activeClip.endSec.toFixed(2))}
                   onChange={(e) => {
                     updateConfig({ trimEnabled: true });
-                    updateTrimRange(clip.startSec, Number(e.target.value));
+                    updateTrimRange(activeClip.startSec, Number(e.target.value), activeClip.id);
                   }}
                 />
               </div>
             </div>
 
-            <div className="field-group">
-              <span className="field-label">{t('timeline.cutMode')}</span>
-              <div className="preset-grid">
-                <button
-                  type="button"
-                  className={`preset-card ${config.cutMode === 'fast' ? 'active' : ''}`}
-                  onClick={() => updateConfig({ cutMode: 'fast', trimEnabled: true })}
-                >
-                  <span className="preset-card-title">{t('timeline.cutFast')}</span>
-                  <span className="preset-card-desc">{t('timeline.cutFastHint')}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`preset-card ${config.cutMode === 'accurate' ? 'active' : ''}`}
-                  onClick={() => updateConfig({ cutMode: 'accurate', trimEnabled: true })}
-                >
-                  <span className="preset-card-title">{t('timeline.cutAccurate')}</span>
-                  <span className="preset-card-desc">{t('timeline.cutAccurateHint')}</span>
-                </button>
+            {clips.length === 1 && (
+              <div className="field-group">
+                <span className="field-label">{t('timeline.cutMode')}</span>
+                <div className="preset-grid">
+                  <button
+                    type="button"
+                    className={`preset-card ${config.cutMode === 'fast' ? 'active' : ''}`}
+                    onClick={() => updateConfig({ cutMode: 'fast', trimEnabled: true })}
+                  >
+                    <span className="preset-card-title">{t('timeline.cutFast')}</span>
+                    <span className="preset-card-desc">{t('timeline.cutFastHint')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`preset-card ${config.cutMode === 'accurate' ? 'active' : ''}`}
+                    onClick={() => updateConfig({ cutMode: 'accurate', trimEnabled: true })}
+                  >
+                    <span className="preset-card-title">{t('timeline.cutAccurate')}</span>
+                    <span className="preset-card-desc">{t('timeline.cutAccurateHint')}</span>
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </>
         )}
 
@@ -418,22 +600,24 @@ export function SettingsPanels() {
                 }
               >
                 <option value="original">{t('resize.original')}</option>
-                {(Object.keys(RESOLUTION_PRESET_HEIGHTS) as Array<keyof typeof RESOLUTION_PRESET_HEIGHTS>).map(
-                  (key) => (
-                    <option
-                      key={key}
-                      value={key}
-                      disabled={key === '4k' && cap4k.status === 'disabled'}
-                    >
-                      {RESOLUTION_PRESET_HEIGHTS[key].label}
-                      {key === '4k' && cap4k.status === 'disabled'
-                        ? lang === 'ja'
-                          ? ' (この端末では非対応)'
-                          : ' (Unavailable on this device)'
-                        : ''}
-                    </option>
-                  )
-                )}
+                {(
+                  Object.keys(RESOLUTION_PRESET_HEIGHTS) as Array<
+                    keyof typeof RESOLUTION_PRESET_HEIGHTS
+                  >
+                ).map((key) => (
+                  <option
+                    key={key}
+                    value={key}
+                    disabled={key === '4k' && cap4k.status === 'disabled'}
+                  >
+                    {RESOLUTION_PRESET_HEIGHTS[key].label}
+                    {key === '4k' && cap4k.status === 'disabled'
+                      ? lang === 'ja'
+                        ? ' (この端末では非対応)'
+                        : ' (Unavailable on this device)'
+                      : ''}
+                  </option>
+                ))}
                 <option value="scale">{t('resize.scaleOption')}</option>
                 <option value="custom">{t('resize.customOption')}</option>
               </select>
@@ -493,7 +677,9 @@ export function SettingsPanels() {
                       disabled={config.keepAspectRatio}
                       className="input-control mono"
                       value={config.keepAspectRatio ? outDims.height : config.customHeight}
-                      onChange={(e) => updateConfig({ customHeight: Number(e.target.value) || 360 })}
+                      onChange={(e) =>
+                        updateConfig({ customHeight: Number(e.target.value) || 360 })
+                      }
                     />
                   </div>
                 </div>
@@ -525,9 +711,10 @@ export function SettingsPanels() {
               </select>
             </div>
 
-            <hr style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }} />
+            <hr
+              style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }}
+            />
 
-            {/* Aspect Ratio */}
             <div className="field-group">
               <label className="field-label" htmlFor="sel-aspect">
                 {t('aspect.preset')}
@@ -539,13 +726,13 @@ export function SettingsPanels() {
                 onChange={(e) => updateConfig({ aspectPreset: e.target.value as AspectPreset })}
               >
                 <option value="original">{t('aspect.original')}</option>
-                {(Object.keys(ASPECT_RATIO_PRESETS) as Array<keyof typeof ASPECT_RATIO_PRESETS>).map(
-                  (key) => (
-                    <option key={key} value={key}>
-                      {ASPECT_RATIO_PRESETS[key].label}
-                    </option>
-                  )
-                )}
+                {(
+                  Object.keys(ASPECT_RATIO_PRESETS) as Array<keyof typeof ASPECT_RATIO_PRESETS>
+                ).map((key) => (
+                  <option key={key} value={key}>
+                    {ASPECT_RATIO_PRESETS[key].label}
+                  </option>
+                ))}
                 <option value="custom">{t('aspect.custom')}</option>
               </select>
             </div>
@@ -687,6 +874,28 @@ export function SettingsPanels() {
         {safeTab === 'speed' && (
           <>
             <div className="field-group">
+              <span className="field-label">{t('speed.scope')}</span>
+              <div className="segmented" style={{ width: '100%' }}>
+                {(
+                  [
+                    ['all', 'speed.scopeAll'],
+                    ['selectedClip', 'speed.scopeSelected'],
+                  ] as Array<[SpeedScope, TranslationKey]>
+                ).map(([scope, labelKey]) => (
+                  <button
+                    key={scope}
+                    type="button"
+                    style={{ flex: 1 }}
+                    className={`segmented-btn ${config.speedScope === scope ? 'active' : ''}`}
+                    onClick={() => updateConfig({ speedScope: scope })}
+                  >
+                    {t(labelKey)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="field-group">
               <span className="field-label">{t('speed.presets')}</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {SPEED_PRESETS.map((spd) => (
@@ -782,13 +991,17 @@ export function SettingsPanels() {
               </label>
             </div>
 
-            <hr style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }} />
+            <hr
+              style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }}
+            />
 
             <label className="checkbox-row">
               <input
                 type="checkbox"
                 checked={config.crop.enabled}
-                onChange={(e) => updateConfig({ crop: { ...config.crop, enabled: e.target.checked } })}
+                onChange={(e) =>
+                  updateConfig({ crop: { ...config.crop, enabled: e.target.checked } })
+                }
               />
               <span>{t('transform.cropEnable')}</span>
             </label>
@@ -873,7 +1086,9 @@ export function SettingsPanels() {
                       value={config.crop.heightPct}
                       className="range-control"
                       onChange={(e) =>
-                        updateConfig({ crop: { ...config.crop, heightPct: Number(e.target.value) } })
+                        updateConfig({
+                          crop: { ...config.crop, heightPct: Number(e.target.value) },
+                        })
                       }
                     />
                   </div>
@@ -988,9 +1203,10 @@ export function SettingsPanels() {
               </div>
             )}
 
-            <hr style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }} />
+            <hr
+              style={{ border: 'none', borderTop: '1px solid var(--border-subtle)', margin: '2px 0' }}
+            />
 
-            {/* Audio Extraction Section */}
             <div className="field-group">
               <div className="panel-header" style={{ marginBottom: 4 }}>
                 <span className="field-label">{t('audio.extractHeading')}</span>
@@ -1089,7 +1305,80 @@ export function SettingsPanels() {
         )}
 
         {/* ================================================================
-            TAB 7: SNAPSHOT EXPORT
+            TAB 7: MULTI-TRACK AUDIO (BGM / MIC RECORDING / MIX / LOUDNORM)
+           ================================================================ */}
+        {safeTab === 'multitrack' && <MultiTrackAudioPanel />}
+
+        {/* ================================================================
+            TAB 8: FRAME RATE, VFR->CFR & HDR->SDR COMPATIBILITY
+           ================================================================ */}
+        {safeTab === 'compat' && (
+          <>
+            <div className="field-group">
+              <label className="field-label" htmlFor="sel-fps">
+                {t('compat.fpsPreset')}
+              </label>
+              <select
+                id="sel-fps"
+                className="select-control"
+                value={config.fpsPreset}
+                onChange={(e) => updateConfig({ fpsPreset: e.target.value as FpsPreset })}
+              >
+                <option value="original">{t('compat.fpsOriginal')}</option>
+                <option value="24">24 fps (シネマ)</option>
+                <option value="25">25 fps (PAL)</option>
+                <option value="30">30 fps (標準)</option>
+                <option value="60">60 fps (滑らか)</option>
+                <option value="custom">{t('compat.fpsCustom')}</option>
+              </select>
+            </div>
+
+            {config.fpsPreset === 'custom' && (
+              <div className="field-group">
+                <label className="field-label" htmlFor="inp-cfps">
+                  FPS (5–120)
+                </label>
+                <input
+                  id="inp-cfps"
+                  type="number"
+                  min={5}
+                  max={120}
+                  step={1}
+                  className="input-control mono"
+                  value={config.customFps}
+                  onChange={(e) => updateConfig({ customFps: Number(e.target.value) || 30 })}
+                />
+              </div>
+            )}
+
+            <div className="field-group">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.convertVfrToCfr}
+                  onChange={(e) => updateConfig({ convertVfrToCfr: e.target.checked })}
+                />
+                <span>{t('compat.vfrToCfr')}</span>
+              </label>
+              <p className="field-hint">{t('compat.vfrToCfrHint')}</p>
+            </div>
+
+            <div className="field-group">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={config.convertHdrToSdr}
+                  onChange={(e) => updateConfig({ convertHdrToSdr: e.target.checked })}
+                />
+                <span>{t('compat.hdrToSdr')}</span>
+              </label>
+              <p className="field-hint">{t('compat.hdrToSdrHint')}</p>
+            </div>
+          </>
+        )}
+
+        {/* ================================================================
+            TAB 9: SNAPSHOT EXPORT
            ================================================================ */}
         {safeTab === 'snapshot' && (
           <>

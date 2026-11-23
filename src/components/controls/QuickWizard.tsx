@@ -75,6 +75,14 @@ const WIZARD_ACTIONS: WizardAction[] = [
     videoOnly: true,
   },
   {
+    id: 'bgm',
+    titleKey: 'tab.multitrack',
+    descKey: 'mt.emptyTracks',
+    targetTab: 'multitrack',
+    patch: { taskType: 'video', originalAudioHandling: 'mix' },
+    videoOnly: true,
+  },
+  {
     id: 'snapshot',
     titleKey: 'wizard.snapshot',
     descKey: 'wizard.snapshotDesc',

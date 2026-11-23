@@ -249,3 +249,176 @@ describe('sizeEstimator & deviceLimits', () => {
     expect(getFeatureCapability('codec_av1', mobileProfile).status).toBe('disabled');
   });
 });
+
+describe('Phase 2: Multi-Clip, Multi-Track Audio, 2-Pass, CFR & HDR->SDR', () => {
+  const dummyVideoFile = new File([], 'main.mp4', { type: 'video/mp4' });
+  const dummyVideoFile2 = new File([], 'extra.mov', { type: 'video/quicktime' });
+  const dummyBgmFile = new File([], 'bgm.mp3', { type: 'audio/mpeg' });
+
+  const source1 = {
+    id: 'src-1',
+    file: dummyVideoFile,
+    objectUrl: '',
+    metadata: SAMPLE_VIDEO_META,
+    addedAt: 1,
+  };
+  const source2 = {
+    id: 'src-2',
+    file: dummyVideoFile2,
+    objectUrl: '',
+    metadata: { ...SAMPLE_VIDEO_META, fileName: 'extra.mov', width: 1280, height: 720, durationSec: 20 },
+    addedAt: 2,
+  };
+
+  it('concatenates multiple clips from different files with automatic normalization', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const clips: ClipSegment[] = [
+      { id: 'c1', sourceId: 'src-1', startSec: 2, endSec: 12 },
+      { id: 'c2', sourceId: 'src-2', startSec: 0, endSec: 10 },
+    ];
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1, source2],
+      clips,
+      audioTracks: [],
+      config: createDefaultEditConfig(),
+    });
+
+    expect(plan.inputs).toHaveLength(2);
+    expect(plan.args).toContain('-filter_complex');
+    const fc = plan.args[plan.args.indexOf('-filter_complex') + 1];
+    expect(fc).toContain('concat=n=2:v=1:a=1[vcat][acat]');
+    expect(fc).toContain('aresample=48000');
+  });
+
+  it('mixes BGM track with offset, fade, loop, volume, and loudnorm', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const bgmTrack = {
+      id: 'aud-1',
+      name: 'bgm.mp3',
+      file: dummyBgmFile,
+      objectUrl: '',
+      durationSec: 15,
+      isMicRecording: false,
+      volume: 0.6,
+      offsetSec: 2.5,
+      trimStartSec: 1,
+      trimEndSec: 14,
+      fadeInSec: 1.5,
+      fadeOutSec: 2,
+      loop: true,
+      muted: false,
+      waveformPeaks: [],
+    };
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [bgmTrack],
+      config: {
+        ...createDefaultEditConfig(),
+        originalAudioHandling: 'mix',
+        audioOutputMode: 'mix',
+        enableLoudnorm: true,
+      },
+    });
+
+    expect(plan.inputs).toHaveLength(2);
+    const fc = plan.args[plan.args.indexOf('-filter_complex') + 1];
+    expect(fc).toContain('aloop=loop=-1');
+    expect(fc).toContain('afade=t=in');
+    expect(fc).toContain('afade=t=out');
+    expect(fc).toContain('adelay=2500|2500');
+    expect(fc).toContain('amix=inputs=2');
+    expect(fc).toContain('loudnorm=I=-16');
+  });
+
+  it('keeps separate audio tracks in MP4/MKV when audioOutputMode is separate', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const bgmTrack = {
+      id: 'aud-1',
+      name: 'Narration',
+      file: dummyBgmFile,
+      objectUrl: '',
+      durationSec: 15,
+      isMicRecording: true,
+      volume: 1,
+      offsetSec: 0,
+      trimStartSec: 0,
+      trimEndSec: 15,
+      fadeInSec: 0,
+      fadeOutSec: 0,
+      loop: false,
+      muted: false,
+      waveformPeaks: [],
+    };
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [bgmTrack],
+      config: {
+        ...createDefaultEditConfig(),
+        container: 'mkv',
+        originalAudioHandling: 'keep',
+        audioOutputMode: 'separate',
+      },
+    });
+
+    expect(plan.args).toContain('[orig_a]');
+    expect(plan.args).toContain('[bgm_0]');
+    expect(plan.args).toContain('-metadata:s:a:1');
+    expect(plan.args).toContain('title=Narration');
+  });
+
+  it('generates 2-pass command and target video bitrate for Discord 10MB target size', async () => {
+    const { buildFullFFmpegCommand, computeTargetVideoBitrateKbps } = await import('../commandBuilder');
+    const kbps = computeTargetVideoBitrateKbps(9.5, 60, 96, true);
+    expect(kbps).toBeGreaterThan(900);
+    expect(kbps).toBeLessThan(1300);
+
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        rateControlMode: 'targetSize',
+        targetSizeMB: 9.5,
+        audioBitrateKbps: 96,
+        enableTwoPass: true,
+      },
+    });
+
+    expect(plan.usedTwoPass).toBe(true);
+    expect(plan.pass1Args).not.toBeNull();
+    expect(plan.pass1Args).toContain('-pass');
+    expect(plan.pass1Args).toContain('1');
+    expect(plan.args).toContain('-pass');
+    expect(plan.args).toContain('2');
+    expect(plan.args).toContain('-b:v');
+  });
+
+  it('applies VFR->CFR (-vsync cfr + fps) and HDR->SDR tone mapping (zscale + tonemap)', async () => {
+    const { buildFullFFmpegCommand } = await import('../commandBuilder');
+    const plan = buildFullFFmpegCommand({
+      primarySource: source1,
+      sources: [source1],
+      clips: [FULL_CLIP],
+      audioTracks: [],
+      config: {
+        ...createDefaultEditConfig(),
+        fpsPreset: '30',
+        convertVfrToCfr: true,
+        convertHdrToSdr: true,
+      },
+    });
+
+    expect(plan.args).toContain('-vsync');
+    expect(plan.args).toContain('cfr');
+    const vf = plan.args[plan.args.indexOf('-vf') + 1];
+    expect(vf).toContain('tonemap=tonemap=hable:desat=0');
+    expect(vf).toContain('fps=30');
+  });
+});

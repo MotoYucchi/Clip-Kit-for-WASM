@@ -1,12 +1,35 @@
+import { useRef } from 'react';
 import { translate } from '../../i18n';
 import { useJobStore } from '../../store/useJobStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useUiStore } from '../../store/useUiStore';
 
 export function Header() {
-  const { lang, setLang, theme, setTheme, uiMode, setUiMode, device } = useUiStore();
+  const {
+    lang,
+    setLang,
+    theme,
+    setTheme,
+    uiMode,
+    setUiMode,
+    device,
+    setShortcutsOpen,
+    showToast,
+  } = useUiStore();
   const { wasmStatus, wasmMode } = useJobStore();
-  const { source, resetConfig, clearSource } = useProjectStore();
+  const {
+    source,
+    past,
+    future,
+    undo,
+    redo,
+    resetConfig,
+    clearSource,
+    exportProjectJson,
+    importProjectJson,
+  } = useProjectStore();
+  const jsonInputRef = useRef<HTMLInputElement | null>(null);
+
   const t = (key: Parameters<typeof translate>[1]) => translate(lang, key);
 
   const wasmPillClass =
@@ -37,12 +60,44 @@ export function Header() {
         : 'device.pc'
   );
 
+  const handleSaveProject = () => {
+    const json = exportProjectJson();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `clipkit-project-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+    showToast(t('project.savedToast'));
+  };
+
+  const handleLoadProject = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const text = await files[0].text();
+    const res = importProjectJson(text);
+    if (res.ok) {
+      showToast(t('project.loadedToast'));
+    } else if (res.error) {
+      showToast(res.error);
+    }
+  };
+
   return (
     <header className="app-header">
       <div className="header-inner">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <rect x="2" y="4" width="20" height="16" rx="2.5" />
               <line x1="7" y1="4" x2="7" y2="20" />
               <line x1="17" y1="4" x2="17" y2="20" />
@@ -66,31 +121,72 @@ export function Header() {
             {t(wasmLabelKey)} · {wasmMode === 'mt' ? 'MT' : 'ST'}
           </span>
 
-          <span className="pill" title={`${device.cpuCores} cores / ~${device.deviceMemoryGB}GB RAM`}>
+          <span
+            className="pill"
+            title={`${device.cpuCores} cores / ~${device.deviceMemoryGB}GB RAM`}
+          >
             {tierLabel}
           </span>
 
           {source && (
-            <div className="segmented" role="group" aria-label="UI Mode">
-              <button
-                type="button"
-                className={`segmented-btn ${uiMode === 'simple' ? 'active' : ''}`}
-                onClick={() => setUiMode('simple')}
-              >
-                {t('header.modeSimple')}
-              </button>
-              <button
-                type="button"
-                className={`segmented-btn ${uiMode === 'advanced' ? 'active' : ''}`}
-                onClick={() => setUiMode('advanced')}
-              >
-                {t('header.modeAdvanced')}
-              </button>
-            </div>
-          )}
-
-          {source && (
             <>
+              <div className="segmented" role="group" aria-label="UI Mode">
+                <button
+                  type="button"
+                  className={`segmented-btn ${uiMode === 'simple' ? 'active' : ''}`}
+                  onClick={() => setUiMode('simple')}
+                >
+                  {t('header.modeSimple')}
+                </button>
+                <button
+                  type="button"
+                  className={`segmented-btn ${uiMode === 'advanced' ? 'active' : ''}`}
+                  onClick={() => setUiMode('advanced')}
+                >
+                  {t('header.modeAdvanced')}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={past.length === 0}
+                onClick={undo}
+                title={`${t('header.undo')} (Ctrl+Z)`}
+              >
+                ↶ {t('header.undo')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={future.length === 0}
+                onClick={redo}
+                title={`${t('header.redo')} (Ctrl+Shift+Z)`}
+              >
+                ↷ {t('header.redo')}
+              </button>
+
+              <button type="button" className="btn btn-sm" onClick={handleSaveProject}>
+                {t('header.saveProject')}
+              </button>
+              <input
+                ref={jsonInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="sr-only"
+                onChange={(e) => {
+                  void handleLoadProject(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => jsonInputRef.current?.click()}
+              >
+                {t('header.loadProject')}
+              </button>
+
               <button
                 type="button"
                 className="btn btn-sm"
@@ -99,14 +195,20 @@ export function Header() {
               >
                 {t('header.resetConfig')}
               </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={clearSource}
-              >
+              <button type="button" className="btn btn-sm" onClick={clearSource}>
                 {t('header.changeFile')}
               </button>
             </>
+          )}
+
+          {device.tier !== 'mobile' && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setShortcutsOpen(true)}
+            >
+              {t('header.shortcuts')}
+            </button>
           )}
 
           <button

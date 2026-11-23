@@ -7,7 +7,12 @@ import {
   saveRecoverySnapshot,
   type RecoverySnapshot,
 } from '../services/recoveryService';
-import type { ClipSegment, EditConfig } from '../types/edit';
+import type {
+  AudioOverlayTrack,
+  ClipSegment,
+  EditConfig,
+  ProjectJsonExport,
+} from '../types/edit';
 import type { MediaMetadata, MediaSourceItem } from '../types/media';
 import { clamp } from '../utils/formatters';
 
@@ -17,8 +22,14 @@ interface HistoryEntry {
 }
 
 interface ProjectState {
+  /** Primary video/audio source (always sources[0] ?? null) */
   source: MediaSourceItem | null;
+  /** All loaded sources (for multi-file concatenation) */
+  sources: MediaSourceItem[];
+  primaryWaveformPeaks: number[];
   clips: ClipSegment[];
+  selectedClipId: string | null;
+  audioTracks: AudioOverlayTrack[];
   config: EditConfig;
   isProbing: boolean;
   compatNoticeKeys: string[];
@@ -27,25 +38,54 @@ interface ProjectState {
   future: HistoryEntry[];
 
   setSource: (source: MediaSourceItem) => void;
-  updateSourceMetadata: (metadata: MediaMetadata) => void;
+  addAdditionalSource: (source: MediaSourceItem) => void;
+  updateSourceMetadata: (metadata: MediaMetadata, sourceId?: string) => void;
+  setPrimaryWaveformPeaks: (peaks: number[]) => void;
   setProbing: (probing: boolean) => void;
   clearSource: () => void;
 
-  updateConfig: (patch: Partial<EditConfig>) => void;
-  updateTrimRange: (startSec: number, endSec: number) => void;
-  resetConfig: () => void;
+  // Clip editing (single & multi-clip)
+  selectClip: (clipId: string) => void;
+  updateTrimRange: (startSec: number, endSec: number, clipId?: string) => void;
+  splitClipAtTime: (clipId: string, timeSec: number) => void;
+  duplicateClip: (clipId: string) => void;
+  removeClip: (clipId: string) => void;
+  moveClip: (clipId: string, direction: -1 | 1) => void;
 
+  // Multi-track audio overlay (BGM / Mic recordings)
+  addAudioTrack: (track: AudioOverlayTrack) => void;
+  updateAudioTrack: (trackId: string, patch: Partial<AudioOverlayTrack>) => void;
+  removeAudioTrack: (trackId: string) => void;
+
+  // Config & History
+  updateConfig: (patch: Partial<EditConfig>) => void;
+  resetConfig: () => void;
   undo: () => void;
   redo: () => void;
 
+  // Project JSON Save / Load (excludes binary video files)
+  exportProjectJson: () => string;
+  importProjectJson: (rawJson: string) => { ok: boolean; error?: string };
+
+  // Session Recovery
   restoreRecovery: () => void;
   dismissRecovery: () => void;
 }
 
 const MAX_HISTORY = 40;
 let recoveryTimer: number | null = null;
+let clipCounter = 1;
 
-function scheduleRecoverySave(source: MediaSourceItem | null, clips: ClipSegment[], config: EditConfig) {
+function nextClipId(): string {
+  clipCounter += 1;
+  return `clip-${Date.now()}-${clipCounter}`;
+}
+
+function scheduleRecoverySave(
+  source: MediaSourceItem | null,
+  clips: ClipSegment[],
+  config: EditConfig
+) {
   if (typeof window === 'undefined' || !source) return;
   if (recoveryTimer !== null) {
     window.clearTimeout(recoveryTimer);
@@ -64,7 +104,11 @@ function scheduleRecoverySave(source: MediaSourceItem | null, clips: ClipSegment
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   source: null,
+  sources: [],
+  primaryWaveformPeaks: [],
   clips: [],
+  selectedClipId: null,
+  audioTracks: [],
   config: createDefaultEditConfig(),
   isProbing: false,
   compatNoticeKeys: [],
@@ -73,9 +117,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   future: [],
 
   setSource: (source) => {
-    const prev = get().source;
-    if (prev && prev.objectUrl !== source.objectUrl) {
-      URL.revokeObjectURL(prev.objectUrl);
+    const prevSources = get().sources;
+    for (const prev of prevSources) {
+      if (prev.objectUrl !== source.objectUrl) {
+        URL.revokeObjectURL(prev.objectUrl);
+      }
+    }
+    for (const tr of get().audioTracks) {
+      URL.revokeObjectURL(tr.objectUrl);
     }
 
     const duration = Math.max(0, source.metadata.durationSec);
@@ -84,6 +133,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       sourceId: source.id,
       startSec: 0,
       endSec: duration,
+      label: source.metadata.fileName,
     };
 
     const nextConfig: EditConfig = {
@@ -96,7 +146,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     set({
       source,
+      sources: [source],
+      primaryWaveformPeaks: [],
       clips: [clip],
+      selectedClipId: clip.id,
+      audioTracks: [],
       config: nextConfig,
       compatNoticeKeys: [],
       past: [],
@@ -104,15 +158,43 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     });
   },
 
-  updateSourceMetadata: (metadata) => {
-    const { source, clips, config } = get();
-    if (!source) return;
+  addAdditionalSource: (newSource) => {
+    const { sources, clips, config, past } = get();
+    const duration = Math.max(0.1, newSource.metadata.durationSec);
+    const newClip: ClipSegment = {
+      id: nextClipId(),
+      sourceId: newSource.id,
+      startSec: 0,
+      endSec: duration,
+      label: newSource.metadata.fileName,
+    };
+    const nextClips = [...clips, newClip];
+    set({
+      sources: [...sources, newSource],
+      clips: nextClips,
+      selectedClipId: newClip.id,
+      past: [...past, { config, clips }].slice(-MAX_HISTORY),
+      future: [],
+    });
+  },
 
-    const updatedSource: MediaSourceItem = { ...source, metadata };
+  updateSourceMetadata: (metadata, sourceId) => {
+    const { source, sources, clips, config } = get();
+    if (!source) return;
+    const targetId = sourceId ?? source.id;
+    const targetSource = sources.find((s) => s.id === targetId);
+    if (!targetSource) return;
+
+    const updatedSources = sources.map((s) =>
+      s.id === targetId ? { ...s, metadata } : s
+    );
+    const updatedPrimary = updatedSources[0] ?? null;
     const duration = Math.max(0, metadata.durationSec);
-    const updatedClips = clips.map((clip, idx) => {
-      if (idx !== 0) return clip;
-      const shouldExpandEnd = clip.endSec <= 0 || Math.abs(clip.endSec - source.metadata.durationSec) < 0.2;
+
+    const updatedClips = clips.map((clip) => {
+      if (clip.sourceId !== targetId) return clip;
+      const shouldExpandEnd =
+        clip.endSec <= 0 || Math.abs(clip.endSec - targetSource.metadata.durationSec) < 0.2;
       return {
         ...clip,
         startSec: clamp(clip.startSec, 0, Math.max(0, duration - 0.1)),
@@ -120,36 +202,176 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       };
     });
 
-    const nextConfig: EditConfig = {
-      ...config,
-      taskType: metadata.isAudioOnly ? 'audio-extract' : config.taskType,
-      customWidth: config.resolutionPreset === 'custom' ? config.customWidth : (metadata.width || config.customWidth),
-      customHeight: config.resolutionPreset === 'custom' ? config.customHeight : (metadata.height || config.customHeight),
-    };
+    const nextConfig: EditConfig =
+      targetId === source.id
+        ? {
+            ...config,
+            taskType: metadata.isAudioOnly ? 'audio-extract' : config.taskType,
+            customWidth:
+              config.resolutionPreset === 'custom'
+                ? config.customWidth
+                : metadata.width || config.customWidth,
+            customHeight:
+              config.resolutionPreset === 'custom'
+                ? config.customHeight
+                : metadata.height || config.customHeight,
+          }
+        : config;
 
     set({
-      source: updatedSource,
+      source: updatedPrimary,
+      sources: updatedSources,
       clips: updatedClips,
       config: nextConfig,
     });
   },
 
+  setPrimaryWaveformPeaks: (primaryWaveformPeaks) => set({ primaryWaveformPeaks }),
+
   setProbing: (isProbing) => set({ isProbing }),
 
   clearSource: () => {
-    const prev = get().source;
-    if (prev) {
+    for (const prev of get().sources) {
       URL.revokeObjectURL(prev.objectUrl);
+    }
+    for (const tr of get().audioTracks) {
+      URL.revokeObjectURL(tr.objectUrl);
     }
     set({
       source: null,
+      sources: [],
+      primaryWaveformPeaks: [],
       clips: [],
+      selectedClipId: null,
+      audioTracks: [],
       config: createDefaultEditConfig(),
       compatNoticeKeys: [],
       past: [],
       future: [],
     });
   },
+
+  selectClip: (selectedClipId) => set({ selectedClipId }),
+
+  updateTrimRange: (startSec, endSec, clipId) => {
+    const { source, sources, clips, selectedClipId, config, past } = get();
+    if (!source || clips.length === 0) return;
+
+    const targetClipId = clipId ?? selectedClipId ?? clips[0].id;
+    const targetClip = clips.find((c) => c.id === targetClipId) ?? clips[0];
+    const clipSource = sources.find((s) => s.id === targetClip.sourceId) ?? source;
+
+    const maxDur = Math.max(0.1, clipSource.metadata.durationSec);
+    const safeStart = clamp(startSec, 0, Math.max(0, maxDur - 0.05));
+    const safeEnd = clamp(endSec, safeStart + 0.05, maxDur);
+
+    const nextClips = clips.map((c) =>
+      c.id === targetClip.id ? { ...c, startSec: safeStart, endSec: safeEnd } : c
+    );
+    const nextPast = [...past, { config, clips }].slice(-MAX_HISTORY);
+    set({
+      clips: nextClips,
+      past: nextPast,
+      future: [],
+    });
+    scheduleRecoverySave(source, nextClips, config);
+  },
+
+  splitClipAtTime: (clipId, timeSec) => {
+    const { source, clips, config, past } = get();
+    const idx = clips.findIndex((c) => c.id === clipId);
+    if (idx === -1) return;
+    const target = clips[idx];
+    const splitPoint = clamp(timeSec, target.startSec + 0.1, target.endSec - 0.1);
+    if (splitPoint <= target.startSec + 0.05 || splitPoint >= target.endSec - 0.05) {
+      return;
+    }
+
+    const firstHalf: ClipSegment = { ...target, endSec: Number(splitPoint.toFixed(2)) };
+    const secondHalf: ClipSegment = {
+      ...target,
+      id: nextClipId(),
+      startSec: Number(splitPoint.toFixed(2)),
+    };
+
+    const nextClips = [...clips.slice(0, idx), firstHalf, secondHalf, ...clips.slice(idx + 1)];
+    set({
+      clips: nextClips,
+      selectedClipId: secondHalf.id,
+      config: { ...config, trimEnabled: true },
+      past: [...past, { config, clips }].slice(-MAX_HISTORY),
+      future: [],
+    });
+    scheduleRecoverySave(source, nextClips, config);
+  },
+
+  duplicateClip: (clipId) => {
+    const { source, clips, config, past } = get();
+    const idx = clips.findIndex((c) => c.id === clipId);
+    if (idx === -1) return;
+    const copy: ClipSegment = { ...clips[idx], id: nextClipId() };
+    const nextClips = [...clips.slice(0, idx + 1), copy, ...clips.slice(idx + 1)];
+    set({
+      clips: nextClips,
+      selectedClipId: copy.id,
+      config: { ...config, trimEnabled: true },
+      past: [...past, { config, clips }].slice(-MAX_HISTORY),
+      future: [],
+    });
+    scheduleRecoverySave(source, nextClips, config);
+  },
+
+  removeClip: (clipId) => {
+    const { source, clips, selectedClipId, config, past } = get();
+    if (clips.length <= 1) return;
+    const nextClips = clips.filter((c) => c.id !== clipId);
+    const nextSelected =
+      selectedClipId === clipId ? (nextClips[0]?.id ?? null) : selectedClipId;
+    set({
+      clips: nextClips,
+      selectedClipId: nextSelected,
+      past: [...past, { config, clips }].slice(-MAX_HISTORY),
+      future: [],
+    });
+    scheduleRecoverySave(source, nextClips, config);
+  },
+
+  moveClip: (clipId, direction) => {
+    const { source, clips, config, past } = get();
+    const idx = clips.findIndex((c) => c.id === clipId);
+    const targetIdx = idx + direction;
+    if (idx === -1 || targetIdx < 0 || targetIdx >= clips.length) return;
+    const nextClips = [...clips];
+    const [moved] = nextClips.splice(idx, 1);
+    nextClips.splice(targetIdx, 0, moved);
+    set({
+      clips: nextClips,
+      past: [...past, { config, clips }].slice(-MAX_HISTORY),
+      future: [],
+    });
+    scheduleRecoverySave(source, nextClips, config);
+  },
+
+  addAudioTrack: (track) =>
+    set((state) => ({
+      audioTracks: [...state.audioTracks, track],
+    })),
+
+  updateAudioTrack: (trackId, patch) =>
+    set((state) => ({
+      audioTracks: state.audioTracks.map((tr) =>
+        tr.id === trackId ? { ...tr, ...patch } : tr
+      ),
+    })),
+
+  removeAudioTrack: (trackId) =>
+    set((state) => {
+      const target = state.audioTracks.find((tr) => tr.id === trackId);
+      if (target) URL.revokeObjectURL(target.objectUrl);
+      return {
+        audioTracks: state.audioTracks.filter((tr) => tr.id !== trackId),
+      };
+    }),
 
   updateConfig: (patch) => {
     const { source, clips, config, past } = get();
@@ -159,7 +381,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       crop: patch.crop ? { ...config.crop, ...patch.crop } : config.crop,
     };
 
-    // Enforce container <-> codec compatibility
     const compat = resolveCodecCompatibility(
       merged.container,
       merged.videoCodec,
@@ -178,31 +399,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     scheduleRecoverySave(source, clips, merged);
   },
 
-  updateTrimRange: (startSec, endSec) => {
-    const { source, clips, config, past } = get();
-    if (!source || clips.length === 0) return;
-
-    const maxDur = Math.max(0.1, source.metadata.durationSec);
-    const safeStart = clamp(startSec, 0, Math.max(0, maxDur - 0.05));
-    const safeEnd = clamp(endSec, safeStart + 0.05, maxDur);
-
-    const nextClips = clips.map((c, idx) =>
-      idx === 0 ? { ...c, startSec: safeStart, endSec: safeEnd } : c
-    );
-    const nextPast = [...past, { config, clips }].slice(-MAX_HISTORY);
-    set({
-      clips: nextClips,
-      past: nextPast,
-      future: [],
-    });
-    scheduleRecoverySave(source, nextClips, config);
-  },
-
   resetConfig: () => {
     const { source, clips, config, past } = get();
     const duration = source?.metadata.durationSec ?? 0;
     const resetClips = source
-      ? [{ id: 'clip-0', sourceId: source.id, startSec: 0, endSec: duration }]
+      ? [
+          {
+            id: 'clip-0',
+            sourceId: source.id,
+            startSec: 0,
+            endSec: duration,
+            label: source.metadata.fileName,
+          },
+        ]
       : [];
     const nextConfig: EditConfig = {
       ...createDefaultEditConfig(),
@@ -213,6 +422,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({
       config: nextConfig,
       clips: resetClips,
+      selectedClipId: resetClips[0]?.id ?? null,
       compatNoticeKeys: [],
       past: [...past, { config, clips }].slice(-MAX_HISTORY),
       future: [],
@@ -226,6 +436,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({
       config: previous.config,
       clips: previous.clips,
+      selectedClipId: previous.clips[0]?.id ?? null,
       past: past.slice(0, -1),
       future: [{ config, clips }, ...future].slice(0, MAX_HISTORY),
     });
@@ -238,20 +449,92 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({
       config: next.config,
       clips: next.clips,
+      selectedClipId: next.clips[0]?.id ?? null,
       past: [...past, { config, clips }].slice(-MAX_HISTORY),
       future: future.slice(1),
     });
+  },
+
+  exportProjectJson: () => {
+    const { sources, clips, audioTracks, config } = get();
+    const payload: ProjectJsonExport = {
+      schemaVersion: 2,
+      app: 'Clip-Kit-for-WASM',
+      exportedAt: new Date().toISOString(),
+      config,
+      clips: clips.map((c) => {
+        const src = sources.find((s) => s.id === c.sourceId);
+        return {
+          sourceFileName: src?.metadata.fileName ?? '',
+          startSec: c.startSec,
+          endSec: c.endSec,
+        };
+      }),
+      audioTracksMeta: audioTracks.map((tr) => ({
+        name: tr.name,
+        volume: tr.volume,
+        offsetSec: tr.offsetSec,
+        trimStartSec: tr.trimStartSec,
+        trimEndSec: tr.trimEndSec,
+        fadeInSec: tr.fadeInSec,
+        fadeOutSec: tr.fadeOutSec,
+        loop: tr.loop,
+        muted: tr.muted,
+      })),
+    };
+    return JSON.stringify(payload, null, 2);
+  },
+
+  importProjectJson: (rawJson) => {
+    try {
+      const parsed = JSON.parse(rawJson) as Partial<ProjectJsonExport>;
+      if (!parsed || parsed.app !== 'Clip-Kit-for-WASM' || !parsed.config) {
+        return { ok: false, error: 'Clip-Kit-for-WASM の有効なプロジェクト JSON ではありません。' };
+      }
+
+      const defaults = createDefaultEditConfig();
+      const nextConfig: EditConfig = {
+        ...defaults,
+        ...parsed.config,
+        crop: { ...defaults.crop, ...(parsed.config.crop || {}) },
+      };
+
+      const { source, clips, config, past } = get();
+      let nextClips = clips;
+      if (source && Array.isArray(parsed.clips) && parsed.clips.length > 0) {
+        const dur = Math.max(0.1, source.metadata.durationSec);
+        nextClips = parsed.clips.map((c, idx) => ({
+          id: idx === 0 ? 'clip-0' : nextClipId(),
+          sourceId: source.id,
+          startSec: clamp(Number(c.startSec) || 0, 0, Math.max(0, dur - 0.05)),
+          endSec: clamp(Number(c.endSec) || dur, 0.05, dur),
+          label: c.sourceFileName || source.metadata.fileName,
+        }));
+      }
+
+      set({
+        config: nextConfig,
+        clips: nextClips,
+        selectedClipId: nextClips[0]?.id ?? null,
+        past: [...past, { config, clips }].slice(-MAX_HISTORY),
+        future: [],
+      });
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'JSON の解析に失敗しました。ファイル内容を確認してください。' };
+    }
   },
 
   restoreRecovery: () => {
     const { pendingRecovery, source, clips } = get();
     if (!pendingRecovery) return;
 
+    const defaults = createDefaultEditConfig();
     const restoredConfig: EditConfig = {
-      ...createDefaultEditConfig(),
+      ...defaults,
       ...pendingRecovery.config,
       crop: {
-        ...createDefaultEditConfig().crop,
+        ...defaults.crop,
         ...(pendingRecovery.config.crop || {}),
       },
     };
@@ -261,7 +544,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ? [
             {
               ...clips[0],
-              startSec: clamp(pendingRecovery.trimStartSec, 0, Math.max(0, source.metadata.durationSec - 0.05)),
+              startSec: clamp(
+                pendingRecovery.trimStartSec,
+                0,
+                Math.max(0, source.metadata.durationSec - 0.05)
+              ),
               endSec: clamp(
                 pendingRecovery.trimEndSec,
                 0.05,

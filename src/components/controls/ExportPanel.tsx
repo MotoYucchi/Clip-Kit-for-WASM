@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { buildFFmpegCommand } from '../../engine/commandBuilder';
+import { buildFullFFmpegCommand } from '../../engine/commandBuilder';
 import { estimateOutputSize } from '../../engine/sizeEstimator';
 import { translate } from '../../i18n';
 import { saveExportedBlob } from '../../services/exportService';
@@ -15,7 +15,7 @@ interface ExportPanelProps {
 
 export function ExportPanel({ onExecute }: ExportPanelProps) {
   const { lang, device, showToast } = useUiStore();
-  const { source, clips, config } = useProjectStore();
+  const { source, sources, clips, selectedClipId, audioTracks, config } = useProjectStore();
   const { wasmStatus, latestResult, errorMessage } = useJobStore();
   const { setPreviewMode } = usePlaybackStore();
   const [showCommand, setShowCommand] = useState(false);
@@ -23,19 +23,24 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(lang, key, params);
 
-  const primaryClip = clips[0];
-
   const estimate = useMemo(() => {
-    if (!source || !primaryClip) return null;
-    return estimateOutputSize(source.metadata, config, primaryClip);
-  }, [source, primaryClip, config]);
+    if (!source || clips.length === 0) return null;
+    return estimateOutputSize(source.metadata, config, clips, audioTracks, selectedClipId);
+  }, [source, clips, selectedClipId, audioTracks, config]);
 
   const commandPlan = useMemo(() => {
-    if (!source || !primaryClip) return null;
-    return buildFFmpegCommand('input', source.metadata, config, primaryClip);
-  }, [source, primaryClip, config]);
+    if (!source || clips.length === 0) return null;
+    return buildFullFFmpegCommand({
+      primarySource: source,
+      sources,
+      clips,
+      selectedClipId,
+      audioTracks,
+      config,
+    });
+  }, [source, sources, clips, selectedClipId, audioTracks, config]);
 
-  if (!source || !primaryClip || !estimate || !commandPlan) return null;
+  if (!source || clips.length === 0 || !estimate || !commandPlan) return null;
 
   const isBusy = wasmStatus === 'loading' || wasmStatus === 'running';
 
@@ -84,9 +89,24 @@ export function ExportPanel({ onExecute }: ExportPanelProps) {
         </div>
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <span className={`pill ${commandPlan.usedStreamCopy ? 'pill-success' : 'pill-primary'}`}>
-            {commandPlan.usedStreamCopy ? t('export.fastCopy') : t('export.singlePass')}
+          <span
+            className={`pill ${
+              commandPlan.usedStreamCopy
+                ? 'pill-success'
+                : commandPlan.usedTwoPass
+                  ? 'pill-info'
+                  : 'pill-primary'
+            }`}
+          >
+            {commandPlan.usedStreamCopy
+              ? t('export.fastCopy')
+              : commandPlan.usedTwoPass
+                ? t('export.twoPassBadge')
+                : t('export.singlePass')}
           </span>
+          {commandPlan.computedVideoBitrateKbps && (
+            <span className="pill mono">{commandPlan.computedVideoBitrateKbps} kbps</span>
+          )}
           <span className="pill mono">{commandPlan.downloadFileName}</span>
         </div>
 

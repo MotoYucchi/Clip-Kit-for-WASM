@@ -8,12 +8,14 @@ import { DropZone } from './components/media/DropZone';
 import { MetadataBar } from './components/media/MetadataBar';
 import { VideoPreview } from './components/media/VideoPreview';
 import { ProgressModal } from './components/modals/ProgressModal';
+import { ShortcutsModal } from './components/modals/ShortcutsModal';
 import { Timeline } from './components/timeline/Timeline';
-import { buildFFmpegCommand } from './engine/commandBuilder';
+import { buildFullFFmpegCommand } from './engine/commandBuilder';
 import { ffmpegClient } from './engine/ffmpegClient';
 import { probeViaBrowserElement } from './engine/probeParser';
 import { translate } from './i18n';
 import { wakeLockService } from './services/wakeLockService';
+import { extractWaveformPeaks } from './services/waveformService';
 import { useJobStore } from './store/useJobStore';
 import { usePlaybackStore } from './store/usePlaybackStore';
 import { useProjectStore } from './store/useProjectStore';
@@ -25,6 +27,7 @@ export function App() {
     uiMode,
     mobileSheetOpen,
     setMobileSheetOpen,
+    setShortcutsOpen,
     toastMessage,
     showToast,
     refreshDevice,
@@ -32,11 +35,16 @@ export function App() {
 
   const {
     source,
+    sources,
     clips,
+    selectedClipId,
+    audioTracks,
     config,
     pendingRecovery,
     setSource,
+    addAdditionalSource,
     updateSourceMetadata,
+    setPrimaryWaveformPeaks,
     setProbing,
     restoreRecovery,
     dismissRecovery,
@@ -58,7 +66,6 @@ export function App() {
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(lang, key, params);
 
-  // Sync FFmpeg worker status to job store
   useEffect(() => {
     const unsub = ffmpegClient.onStatusChange((status, mode) => {
       setWasmState(status, mode);
@@ -66,18 +73,23 @@ export function App() {
     return unsub;
   }, [setWasmState]);
 
-  // Keep device tier updated on orientation / resize changes
   useEffect(() => {
     const onResize = () => refreshDevice();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [refreshDevice]);
 
-  // Basic PC keyboard shortcuts (Space play/pause, Ctrl+Z / Ctrl+Shift+Z Undo/Redo)
+  // Full PC Keyboard Shortcuts (Space, J/K/L, I/O, Left/Right, S, Ctrl+Z/Ctrl+Shift+Z, ?)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === '?') {
+        e.preventDefault();
+        setShortcutsOpen(!useUiStore.getState().shortcutsOpen);
+        return;
+      }
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -86,11 +98,56 @@ export function App() {
         } else {
           useProjectStore.getState().undo();
         }
+        return;
+      }
+
+      const proj = useProjectStore.getState();
+      if (!proj.source) return;
+      const pb = usePlaybackStore.getState();
+      const activeClip = proj.clips.find((c) => c.id === proj.selectedClipId) ?? proj.clips[0];
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        pb.dispatchCommand('toggle');
+      } else if (e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        pb.dispatchCommand('seekDelta', -5);
+      } else if (e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        pb.dispatchCommand('pause');
+      } else if (e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        pb.dispatchCommand('seekDelta', 5);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        pb.dispatchCommand('stepFrame', -1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        pb.dispatchCommand('stepFrame', 1);
+      } else if (e.key.toLowerCase() === 'i' && activeClip) {
+        e.preventDefault();
+        proj.updateConfig({ trimEnabled: true });
+        proj.updateTrimRange(
+          pb.currentTime,
+          Math.max(pb.currentTime + 0.2, activeClip.endSec),
+          activeClip.id
+        );
+      } else if (e.key.toLowerCase() === 'o' && activeClip) {
+        e.preventDefault();
+        proj.updateConfig({ trimEnabled: true });
+        proj.updateTrimRange(
+          Math.min(activeClip.startSec, Math.max(0, pb.currentTime - 0.2)),
+          pb.currentTime,
+          activeClip.id
+        );
+      } else if (e.key.toLowerCase() === 's' && activeClip) {
+        e.preventDefault();
+        proj.splitClipAtTime(activeClip.id, pb.currentTime);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [setShortcutsOpen]);
 
   const handleFileSelected = async (file: File) => {
     clearResult();
@@ -99,20 +156,27 @@ export function App() {
 
     const objectUrl = URL.createObjectURL(file);
     const browserMeta = await probeViaBrowserElement(file, objectUrl);
+    const srcId = `src-${Date.now()}`;
 
     setSource({
-      id: `src-${Date.now()}`,
+      id: srcId,
       file,
       objectUrl,
       metadata: browserMeta,
       addedAt: Date.now(),
     });
 
-    // Enrich metadata asynchronously with FFmpeg probe (rotation, HDR, VFR, multi-audio tracks)
+    // Extract timeline waveform asynchronously (non-blocking)
+    void extractWaveformPeaks(file, 140).then(({ peaks }) => {
+      if (peaks.length > 0) {
+        setPrimaryWaveformPeaks(peaks);
+      }
+    });
+
     setProbing(true);
     try {
       const detailedMeta = await ffmpegClient.probeFile(file, browserMeta);
-      updateSourceMetadata(detailedMeta);
+      updateSourceMetadata(detailedMeta, srcId);
     } catch (err) {
       console.warn('[ClipKit] FFmpeg probe skipped/failed, keeping browser metadata:', err);
     } finally {
@@ -120,18 +184,45 @@ export function App() {
     }
   };
 
+  const handleAppendVideoFile = async (file: File) => {
+    const objectUrl = URL.createObjectURL(file);
+    const browserMeta = await probeViaBrowserElement(file, objectUrl);
+    const srcId = `src-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    addAdditionalSource({
+      id: srcId,
+      file,
+      objectUrl,
+      metadata: browserMeta,
+      addedAt: Date.now(),
+    });
+    showToast(`+ ${file.name}`);
+
+    try {
+      const detailedMeta = await ffmpegClient.probeFile(file, browserMeta);
+      updateSourceMetadata(detailedMeta, srcId);
+    } catch {
+      // Keep browser metadata
+    }
+  };
+
   const handleExecute = async () => {
-    const clip = clips[0];
-    if (!source || !clip) return;
+    if (!source || clips.length === 0) return;
 
     setMobileSheetOpen(false);
-    const plan = buildFFmpegCommand('__INPUT__', source.metadata, config, clip);
+    const plan = buildFullFFmpegCommand({
+      primarySource: source,
+      sources,
+      clips,
+      selectedClipId,
+      audioTracks,
+      config,
+    });
     const wakeLocked = await wakeLockService.acquire();
     startJob(wakeLocked);
 
     try {
       const { blob, elapsedMs } = await ffmpegClient.runCommand({
-        file: source.file,
         plan,
         onProgress: (pct, elapsed, eta) => updateProgress(pct, elapsed, eta),
         onLog: (line) => appendLog(line),
@@ -177,7 +268,6 @@ export function App() {
       <Header />
 
       <main className="app-main">
-        {/* Session recovery banner */}
         {pendingRecovery && (
           <div className="alert-banner alert-info" role="status">
             <span>{t('recovery.message', { fileName: pendingRecovery.lastFileName })}</span>
@@ -196,19 +286,16 @@ export function App() {
           <DropZone onFileSelected={handleFileSelected} />
         ) : (
           <div className="workspace-grid">
-            {/* Left / Main column: Preview + Metadata + Timeline + Simple Wizard */}
             <div className="workspace-left">
               <VideoPreview />
               <MetadataBar />
-              <Timeline />
+              <Timeline onAppendVideoFile={handleAppendVideoFile} />
               {uiMode === 'simple' && <QuickWizard />}
-              {/* On mobile, keep ExportPanel accessible inline as well */}
               <div className="mobile-inline-export">
                 <ExportPanel onExecute={handleExecute} />
               </div>
             </div>
 
-            {/* Right column (PC / Tablet): Detailed Settings + Export */}
             <div className="workspace-right workspace-right-desktop">
               <SettingsPanels />
               <ExportPanel onExecute={handleExecute} />
@@ -221,7 +308,6 @@ export function App() {
 
       <Footer />
 
-      {/* Mobile One-Handed Bottom Action Dock */}
       {source && (
         <div className="mobile-action-dock" role="region" aria-label="Mobile quick actions">
           <button
@@ -248,7 +334,6 @@ export function App() {
         </div>
       )}
 
-      {/* Mobile Bottom Sheet for Editing Controls */}
       {source && mobileSheetOpen && (
         <div
           className="mobile-sheet-backdrop"
@@ -285,6 +370,7 @@ export function App() {
       )}
 
       <ProgressModal onCancel={handleCancel} />
+      <ShortcutsModal />
 
       {toastMessage && (
         <div className="toast-container" role="status" aria-live="polite">

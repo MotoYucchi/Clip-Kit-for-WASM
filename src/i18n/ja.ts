@@ -28,7 +28,7 @@ export const ja = {
   'device.warnLargeFile': 'このファイル（{size}）は {tier} での推奨サイズ（{limit} MB）を超えています。メモリ不足になる場合は解像度を下げるか短くカットして処理してください。',
   'device.warnLongDuration': '再生時間が {tier} の推奨目安（{mins} 分）を超えています。処理に時間がかかる場合があります。',
   'device.warnHevcPreview': 'このブラウザでは HEVC / 特殊コーデックの直接プレビューが非対応のため、書き出し時に H.264 等へ変換して確認できます（読み込み・変換自体は可能です）。',
-  'device.warnHdr': 'HDR 動画を検出しました。SDR 再生環境では色味が変化する場合があります（Phase 2 で HDR→SDR トーンマッピングを追加予定）。',
+  'device.warnHdr': 'HDR 動画を検出しました。SDR 環境で色飛びする場合は「FPS・HDR互換」タブで HDR→SDR トーンマッピングを有効にしてください。',
   'device.warnVfr': '可変フレームレート（VFR）の可能性がある動画です（スマホ撮影など）。音ズレが気になる場合は詳細モードで再エンコードをお試しください。',
   'device.warnRotated': '回転メタデータ（{deg}°）を検出しました。プレビューと出力の向きが一致するよう自動で正規化して処理します。',
 
@@ -277,6 +277,103 @@ export const ja = {
   'licenses.notice3':
     '<strong>スマホ・タブレットご利用時の推奨事項</strong>: メモリ不足によるブラウザ終了を防ぐため、スマートフォンでは 1080p 以下・数分・数百MB 程度を目安にご利用ください。処理中は画面を閉じずにお待ちください。',
   'licenses.libsHeading': '使用ライブラリ・サードパーティライセンス表記',
+
+  // Phase 2: Header, Undo/Redo, Project JSON & Shortcuts
+  'header.undo': '元に戻す',
+  'header.redo': 'やり直し',
+  'header.saveProject': '設定保存 (JSON)',
+  'header.loadProject': '設定読込',
+  'header.shortcuts': 'ショートカット (?)',
+  'project.savedToast': 'プロジェクト設定を JSON として保存しました',
+  'project.loadedToast': 'プロジェクト設定を読み込みました',
+
+  // Phase 2: Tabs
+  'tab.multitrack': 'BGM・多トラック',
+  'tab.compat': 'FPS・HDR互換',
+
+  // Phase 2: Rate Control, 2-Pass & Use-Case Presets
+  'output.useCaseHeading': '用途別プリセット（SNS / Discord 制限）',
+  'output.useCaseNone': 'カスタム / 指定なし',
+  'output.rateModeHeading': '圧縮・ビットレート制御方式',
+  'output.ratePreset': 'プリセット',
+  'output.rateCrf': 'CRF指定',
+  'output.rateBitrate': 'ビットレート指定',
+  'output.rateTargetSize': '目標サイズ指定',
+  'output.targetBitrateKbps': '映像ビットレート (kbps)',
+  'output.targetSizeMB': '目標ファイルサイズ (MB)',
+  'output.computedVideoBitrate': '自動算出された映像ビットレート',
+  'output.enableTwoPass': '2パスエンコードを有効にする（目標サイズ精度向上）',
+  'output.twoPassHint': '2回解析するため時間は約2倍になりますが、Discord 10MB/25MB 制限等の容量精度が高まります',
+  'export.twoPassBadge': '2パスエンコード',
+
+  // Phase 2: Multi-Clip & Concat Timeline
+  'timeline.multiTitle': 'タイムライン（複数区間・連結編集）',
+  'timeline.zoom': 'ズーム',
+  'timeline.splitAtPlayhead': '現在位置で分割',
+  'timeline.duplicateClip': '区間を複製',
+  'timeline.addVideoClip': '+ 動画ファイル連結',
+  'timeline.clipsCount': '{count} クリップ（合計 {dur}）',
+  'timeline.moveLeft': '前へ',
+  'timeline.moveRight': '後ろへ',
+  'timeline.deleteClip': '削除',
+  'timeline.concatNote': '複数クリップ・複数ファイル連結時は、解像度・FPS・音声フォーマットを自動で揃えて結合します。',
+
+  // Phase 2: Speed Scope
+  'speed.scope': '速度変更の対象',
+  'speed.scopeAll': '動画全体',
+  'speed.scopeSelected': '選択中のクリップ区間のみ',
+
+  // Phase 2: Multi-Track Audio Insertion, Mic Recording & Waveform
+  'mt.heading': '音声の挿入・多トラック（BGM / マイク録音）',
+  'mt.addAudioFile': '+ 音声ファイルを追加',
+  'mt.recordMic': 'マイク録音を開始',
+  'mt.stopMic': '録音を停止して追加',
+  'mt.recordingNow': '録音中... {sec}秒',
+  'mt.micUnsupported': 'このブラウザではマイク録音に対応していません',
+  'mt.origAudioHandling': '元動画の音声の扱い',
+  'mt.origKeep': '残す（そのまま）',
+  'mt.origReplace': '置き換える（元音声を削除）',
+  'mt.origMix': 'ミックスする（BGM 等と合成）',
+  'mt.origVolume': '元動画の音量',
+  'mt.outputMode': '音声出力方式',
+  'mt.outputMix': '1本にミックスして書き出し',
+  'mt.outputSeparate': '別トラックとして保持（MP4 / MKV 多音声）',
+  'mt.loudnorm': '音量正規化（loudnorm）を有効にする',
+  'mt.loudnormHint': '複数トラックやマイク録音の音量ばらつきを放送基準（-16 LUFS 目安）へ均一化します',
+  'mt.emptyTracks': 'BGM や効果音ファイルを追加するか、マイク録音でナレーションを追加できます。',
+  'mt.volume': '音量',
+  'mt.offset': '開始位置 (秒)',
+  'mt.trimStart': '音声開始 (秒)',
+  'mt.trimEnd': '音声終了 (秒)',
+  'mt.fadeIn': 'フェードイン (秒)',
+  'mt.fadeOut': 'フェードアウト (秒)',
+  'mt.loop': '動画の長さに合わせてループ',
+  'mt.muteTrack': '一時ミュート',
+  'mt.removeTrack': '削除',
+  'mt.mobileLimitWarn': 'スマホでは安定動作のため追加トラックは最大 2 本までとしています（BGM + マイク等）',
+  'compat.separateTrackNeedsMp4Mkv': '別トラック保持（多音声）は MP4 / MKV のみ対応のため、自動的に1本へミックスされます',
+
+  // Phase 2: FPS, VFR->CFR & HDR->SDR
+  'compat.heading': 'フレームレート・互換性変換',
+  'compat.fpsPreset': '出力フレームレート (FPS)',
+  'compat.fpsOriginal': '元のまま',
+  'compat.fpsCustom': 'カスタム FPS',
+  'compat.vfrToCfr': '可変フレームレート（VFR）→ 固定フレームレート（CFR）へ変換',
+  'compat.vfrToCfrHint': 'スマホ撮影動画のカット・倍速時の音ズレ対策に有効です（-vsync cfr）',
+  'compat.hdrToSdr': 'HDR / HEVC 動画 → SDR へトーンマッピング変換',
+  'compat.hdrToSdrHint': 'iPhone HDR (HLG/PQ) 動画の色飛びを防ぎ、一般的な SDR 環境（BT.709）で見やすく変換します（zscale + tonemap=hable）',
+
+  // Phase 2: Keyboard Shortcuts Modal
+  'shortcuts.title': 'キーボードショートカット（PC向け）',
+  'shortcuts.close': '閉じる',
+  'shortcuts.playPause': '再生 / 一時停止',
+  'shortcuts.jkl': '5秒戻る / 一時停止 / 5秒進む',
+  'shortcuts.io': '開始点 (In) / 終了点 (Out) を設定',
+  'shortcuts.arrows': '1フレーム戻る / 1フレーム進む',
+  'shortcuts.undoRedo': '元に戻す / やり直し',
+  'shortcuts.split': '再生位置でクリップを分割',
+  'shortcuts.help': 'このショートカット一覧を開く',
 } as const;
 
 export type TranslationKey = keyof typeof ja;
+

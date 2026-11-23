@@ -30,7 +30,7 @@ export const en: Record<TranslationKey, string> = {
   'device.warnLargeFile': 'This file ({size}) exceeds the recommended size ({limit} MB) for {tier}. Lower the resolution or trim shorter segments if memory runs low.',
   'device.warnLongDuration': 'Duration exceeds the recommended guideline ({mins} min) for {tier}. Processing may take a while.',
   'device.warnHevcPreview': 'This browser cannot directly preview HEVC/this codec, but FFmpeg.wasm can still decode and convert it to H.264.',
-  'device.warnHdr': 'HDR video detected. Colors may appear washed out on SDR displays (HDR→SDR tone mapping arrives in Phase 2).',
+  'device.warnHdr': 'HDR video detected. Enable HDR→SDR tone mapping in the "FPS & HDR" tab for consistent colors on SDR displays.',
   'device.warnVfr': 'Variable Frame Rate (VFR) suspected (common on smartphone videos). Re-encode in Advanced mode if audio sync drifts.',
   'device.warnRotated': 'Rotation metadata ({deg}°) detected. Output orientation is automatically normalized to match preview.',
 
@@ -279,4 +279,101 @@ export const en: Record<TranslationKey, string> = {
   'licenses.notice3':
     '<strong>Mobile / Tablet Guidance</strong>: To prevent out-of-memory tab reloads on smartphones, keep videos around 1080p, a few minutes, and a few hundred MB, and keep the screen awake while processing.',
   'licenses.libsHeading': 'Third-Party Libraries & Licenses',
+
+  // Phase 2: Header, Undo/Redo, Project JSON & Shortcuts
+  'header.undo': 'Undo',
+  'header.redo': 'Redo',
+  'header.saveProject': 'Save JSON',
+  'header.loadProject': 'Load JSON',
+  'header.shortcuts': 'Shortcuts (?)',
+  'project.savedToast': 'Project settings exported as JSON',
+  'project.loadedToast': 'Project settings imported',
+
+  // Phase 2: Tabs
+  'tab.multitrack': 'BGM & Multi-Track',
+  'tab.compat': 'FPS & HDR',
+
+  // Phase 2: Rate Control, 2-Pass & Use-Case Presets
+  'output.useCaseHeading': 'Platform & Size Presets (SNS / Discord)',
+  'output.useCaseNone': 'Custom / None',
+  'output.rateModeHeading': 'Compression / Rate Control',
+  'output.ratePreset': 'Preset',
+  'output.rateCrf': 'CRF',
+  'output.rateBitrate': 'Bitrate',
+  'output.rateTargetSize': 'Target Size',
+  'output.targetBitrateKbps': 'Target Video Bitrate (kbps)',
+  'output.targetSizeMB': 'Target File Size (MB)',
+  'output.computedVideoBitrate': 'Auto-calculated Video Bitrate',
+  'output.enableTwoPass': 'Enable 2-Pass Encoding (Higher Target-Size Accuracy)',
+  'output.twoPassHint': 'Takes ~2x longer, ideal for hitting strict Discord 10MB / 25MB size limits',
+  'export.twoPassBadge': '2-Pass Encode',
+
+  // Phase 2: Multi-Clip & Concat Timeline
+  'timeline.multiTitle': 'Timeline (Multi-Clip & Concat)',
+  'timeline.zoom': 'Zoom',
+  'timeline.splitAtPlayhead': 'Split Here',
+  'timeline.duplicateClip': 'Duplicate',
+  'timeline.addVideoClip': '+ Append Video',
+  'timeline.clipsCount': '{count} clip(s) · Total {dur}',
+  'timeline.moveLeft': 'Left',
+  'timeline.moveRight': 'Right',
+  'timeline.deleteClip': 'Delete',
+  'timeline.concatNote': 'When concatenating clips or multiple files, resolution, FPS, and audio format are normalized automatically.',
+
+  // Phase 2: Speed Scope
+  'speed.scope': 'Speed Scope',
+  'speed.scopeAll': 'Entire Video',
+  'speed.scopeSelected': 'Selected Clip Only',
+
+  // Phase 2: Multi-Track Audio Insertion, Mic Recording & Waveform
+  'mt.heading': 'Audio Overlay & Multi-Track (BGM / Mic)',
+  'mt.addAudioFile': '+ Add Audio File',
+  'mt.recordMic': 'Start Mic Recording',
+  'mt.stopMic': 'Stop & Add Recording',
+  'mt.recordingNow': 'Recording... {sec}s',
+  'mt.micUnsupported': 'Microphone recording is not supported in this browser',
+  'mt.origAudioHandling': 'Original Video Audio',
+  'mt.origKeep': 'Keep Original',
+  'mt.origReplace': 'Replace Original Audio',
+  'mt.origMix': 'Mix with Added Tracks',
+  'mt.origVolume': 'Original Audio Volume',
+  'mt.outputMode': 'Audio Output Mode',
+  'mt.outputMix': 'Mix into Single Audio Track',
+  'mt.outputSeparate': 'Keep as Separate Tracks (MP4 / MKV)',
+  'mt.loudnorm': 'Enable Loudness Normalization (loudnorm)',
+  'mt.loudnormHint': 'Normalizes volume balance across mixed audio tracks (~-16 LUFS)',
+  'mt.emptyTracks': 'Add BGM/SFX audio files or record directly from your microphone.',
+  'mt.volume': 'Volume',
+  'mt.offset': 'Start Offset (s)',
+  'mt.trimStart': 'Trim Start (s)',
+  'mt.trimEnd': 'Trim End (s)',
+  'mt.fadeIn': 'Fade In (s)',
+  'mt.fadeOut': 'Fade Out (s)',
+  'mt.loop': 'Loop to match video duration',
+  'mt.muteTrack': 'Mute Track',
+  'mt.removeTrack': 'Remove',
+  'mt.mobileLimitWarn': 'On mobile devices, up to 2 overlay audio tracks are allowed for memory stability',
+  'compat.separateTrackNeedsMp4Mkv': 'Separate audio tracks require MP4 or MKV; falling back to mixed output',
+
+  // Phase 2: FPS, VFR->CFR & HDR->SDR
+  'compat.heading': 'Frame Rate & Compatibility',
+  'compat.fpsPreset': 'Output Frame Rate (FPS)',
+  'compat.fpsOriginal': 'Original',
+  'compat.fpsCustom': 'Custom FPS',
+  'compat.vfrToCfr': 'Convert Variable Frame Rate (VFR) → Constant Frame Rate (CFR)',
+  'compat.vfrToCfrHint': 'Prevents audio/video sync drift on smartphone footage (-vsync cfr)',
+  'compat.hdrToSdr': 'Convert HDR / HEVC → SDR (Tone Mapping)',
+  'compat.hdrToSdrHint': 'Maps HDR (HLG/PQ) footage to standard BT.709 SDR using zscale + tonemap=hable',
+
+  // Phase 2: Keyboard Shortcuts Modal
+  'shortcuts.title': 'Keyboard Shortcuts (Desktop)',
+  'shortcuts.close': 'Close',
+  'shortcuts.playPause': 'Play / Pause',
+  'shortcuts.jkl': 'Seek -5s / Pause / Seek +5s',
+  'shortcuts.io': 'Set In / Out trim points',
+  'shortcuts.arrows': 'Step -1 / +1 frame',
+  'shortcuts.undoRedo': 'Undo / Redo',
+  'shortcuts.split': 'Split clip at playhead',
+  'shortcuts.help': 'Toggle this shortcuts dialog',
 };
+

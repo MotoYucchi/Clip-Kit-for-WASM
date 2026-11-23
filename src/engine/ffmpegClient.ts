@@ -3,11 +3,10 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import type { WasmMode, WasmStatus } from '../types/job';
 import type { MediaMetadata } from '../types/media';
 import { getExtension } from '../utils/formatters';
-import type { FFmpegCommandPlan } from './commandBuilder';
+import type { CommandInputSpec, FFmpegCommandPlan } from './commandBuilder';
 import { parseFFmpegProbeLog } from './probeParser';
 
 export interface RunCommandOptions {
-  file: File;
   plan: FFmpegCommandPlan;
   onProgress?: (pct: number, elapsedMs: number, etaSec: number | null) => void;
   onLog?: (line: string) => void;
@@ -84,7 +83,6 @@ class FFmpegClient {
 
       let loaded = false;
 
-      // 1. Try Multi-Threaded core when COOP/COEP + SharedArrayBuffer are available
       if (canUseMT) {
         try {
           const localMtBase = `${baseDir}vendor/ffmpeg-core-mt`;
@@ -99,7 +97,7 @@ class FFmpegClient {
             loaded = true;
           }
         } catch {
-          // Local MT not bundled; try CDN MT next
+          // Local MT not bundled
         }
 
         if (!loaded) {
@@ -117,7 +115,6 @@ class FFmpegClient {
         }
       }
 
-      // 2. Single-Threaded local bundle (works on standard GitHub Pages & offline PWA)
       if (!loaded) {
         const localStBase = `${baseDir}vendor/ffmpeg-core`;
         try {
@@ -132,7 +129,6 @@ class FFmpegClient {
         }
       }
 
-      // 3. Single-Threaded CDN fallback
       if (!loaded) {
         await ffmpeg.load({
           coreURL: await toBlobURL(`${ST_CDN_BASE}/ffmpeg-core.js`, 'text/javascript'),
@@ -155,50 +151,58 @@ class FFmpegClient {
   }
 
   /**
-   * 入力ファイルを WORKERFS でマウント（メモリ複製を回避）。非対応時のみ writeFile へフォールバック。
+   * 複数の入力ファイルを個別の WORKERFS ディレクトリ（/in_0, /in_1, ...）へマウントする。
+   * 同名ファイル衝突を防ぎ、メモリ複製を回避。非対応環境のみ writeFile へフォールバック。
    */
-  private async mountInputFile(
+  private async mountInputFiles(
     ffmpeg: FFmpeg,
-    file: File
-  ): Promise<{ inputPath: string; cleanup: () => Promise<void> }> {
-    const ext = getExtension(file.name) || 'bin';
-    const mountDir = '/input_mount';
+    inputs: CommandInputSpec[]
+  ): Promise<{ pathMap: Map<string, string>; cleanup: () => Promise<void> }> {
+    const pathMap = new Map<string, string>();
+    const cleanupFns: Array<() => Promise<void>> = [];
 
-    try {
-      await ffmpeg.createDir(mountDir).catch(() => undefined);
-      // @ffmpeg/ffmpeg supports WORKERFS via mount('WORKERFS', { files: [file] }, dir)
-      await ffmpeg.mount('WORKERFS' as never, { files: [file] } as never, mountDir);
-      const mountedPath = `${mountDir}/${file.name}`;
-      return {
-        inputPath: mountedPath,
-        cleanup: async () => {
+    for (let i = 0; i < inputs.length; i++) {
+      const { placeholder, file } = inputs[i];
+      const mountDir = `/in_${i}`;
+      try {
+        await ffmpeg.createDir(mountDir).catch(() => undefined);
+        await ffmpeg.mount('WORKERFS' as never, { files: [file] } as never, mountDir);
+        pathMap.set(placeholder, `${mountDir}/${file.name}`);
+        cleanupFns.push(async () => {
           await ffmpeg.unmount(mountDir).catch(() => undefined);
           await ffmpeg.deleteDir(mountDir).catch(() => undefined);
-        },
-      };
-    } catch {
-      const memPath = `input_src.${ext}`;
-      const bytes = await fetchFile(file);
-      await ffmpeg.writeFile(memPath, bytes);
-      return {
-        inputPath: memPath,
-        cleanup: async () => {
+        });
+      } catch {
+        const ext = getExtension(file.name) || 'bin';
+        const memPath = `input_src_${i}.${ext}`;
+        const bytes = await fetchFile(file);
+        await ffmpeg.writeFile(memPath, bytes);
+        pathMap.set(placeholder, memPath);
+        cleanupFns.push(async () => {
           await ffmpeg.deleteFile(memPath).catch(() => undefined);
-        },
-      };
+        });
+      }
     }
+
+    return {
+      pathMap,
+      cleanup: async () => {
+        for (const fn of cleanupFns) {
+          await fn();
+        }
+      },
+    };
   }
 
-  /**
-   * FFmpeg を用いて正確なメタデータ（回転・HDR・VFR・複数音声トラック等）を解析する。
-   */
   async probeFile(file: File, baseMeta: MediaMetadata): Promise<MediaMetadata> {
     const ffmpeg = await this.ensureLoaded();
-    const { inputPath, cleanup } = await this.mountInputFile(ffmpeg, file);
+    const { pathMap, cleanup } = await this.mountInputFiles(ffmpeg, [
+      { placeholder: '__PROBE__', file },
+    ]);
+    const inputPath = pathMap.get('__PROBE__')!;
     this.activeLogs = [];
 
     try {
-      // `ffmpeg -i <file>` exits with code 1 because no output is specified; stderr contains stream info
       await ffmpeg.exec(['-hide_banner', '-i', inputPath]).catch(() => undefined);
       const parsed = parseFFmpegProbeLog(this.activeLogs, baseMeta);
       return {
@@ -212,38 +216,65 @@ class FFmpegClient {
   }
 
   /**
-   * FFmpeg コマンドプランを実行し、進捗・残り時間通知と確実なメモリ解放を行う。
+   * 単一パスまたは 2パス FFmpeg コマンドプランを実行する。
    */
   async runCommand(options: RunCommandOptions): Promise<RunCommandResult> {
-    const { file, plan, onProgress, onLog } = options;
+    const { plan, onProgress, onLog } = options;
     this.cancelled = false;
 
     const ffmpeg = await this.ensureLoaded();
     this.emitStatus('running');
 
-    const { inputPath, cleanup } = await this.mountInputFile(ffmpeg, file);
-    const args = plan.args.map((arg) => (arg === '__INPUT__' ? inputPath : arg));
+    const { pathMap, cleanup } = await this.mountInputFiles(ffmpeg, plan.inputs);
+    const resolveArgs = (rawArgs: string[]) =>
+      rawArgs.map((arg) => pathMap.get(arg) ?? arg);
 
     const startedAt = performance.now();
     this.activeLogs = [];
     this.activeLogListener = onLog ?? null;
 
     const targetDurationUs = Math.max(100_000, plan.effectiveDurationSec * 1_000_000);
-    this.activeProgressHandler = (progress, timeUs) => {
-      const elapsedMs = performance.now() - startedAt;
-      let ratio = Number.isFinite(progress) && progress > 0 && progress <= 1 ? progress : 0;
-      if (Number.isFinite(timeUs) && timeUs > 0) {
-        const byTime = Math.min(0.99, timeUs / targetDurationUs);
-        ratio = Math.max(ratio, byTime);
-      }
-      const pct = Math.max(0, Math.min(99, Math.round(ratio * 100)));
-      const etaSec =
-        ratio > 0.03 ? Math.max(1, Math.round(((elapsedMs / ratio) - elapsedMs) / 1000)) : null;
-      onProgress?.(pct, elapsedMs, etaSec);
+    const hasTwoPass = Boolean(plan.pass1Args);
+
+    const bindProgressRange = (rangeStartPct: number, rangeEndPct: number) => {
+      this.activeProgressHandler = (progress, timeUs) => {
+        const elapsedMs = performance.now() - startedAt;
+        let localRatio = Number.isFinite(progress) && progress > 0 && progress <= 1 ? progress : 0;
+        if (Number.isFinite(timeUs) && timeUs > 0) {
+          const byTime = Math.min(0.99, timeUs / targetDurationUs);
+          localRatio = Math.max(localRatio, byTime);
+        }
+        const totalPct = Math.round(
+          rangeStartPct + localRatio * (rangeEndPct - rangeStartPct)
+        );
+        const totalRatio = totalPct / 100;
+        const etaSec =
+          totalRatio > 0.03
+            ? Math.max(1, Math.round((elapsedMs / totalRatio - elapsedMs) / 1000))
+            : null;
+        onProgress?.(Math.min(99, Math.max(0, totalPct)), elapsedMs, etaSec);
+      };
     };
 
     try {
-      const exitCode = await ffmpeg.exec(args);
+      // Pass 1 (if 2-pass enabled)
+      if (plan.pass1Args) {
+        onLog?.('--- [Pass 1 / 2] Analyzing bitrate distribution ---');
+        bindProgressRange(0, 45);
+        const pass1Code = await ffmpeg.exec(resolveArgs(plan.pass1Args));
+        if (this.cancelled) throw new Error('CANCELLED');
+        if (pass1Code !== 0) {
+          const tail = this.activeLogs.slice(-6).join('\n');
+          throw new Error(`FFmpeg Pass 1 failed (code ${pass1Code})\n${tail}`);
+        }
+        onLog?.('--- [Pass 2 / 2] Final encoding ---');
+        bindProgressRange(45, 99);
+      } else {
+        bindProgressRange(0, 99);
+      }
+
+      // Main / Pass 2
+      const exitCode = await ffmpeg.exec(resolveArgs(plan.args));
       if (this.cancelled) {
         throw new Error('CANCELLED');
       }
@@ -267,15 +298,16 @@ class FFmpegClient {
       this.activeProgressHandler = null;
       if (!this.cancelled && this.ffmpeg?.loaded) {
         await ffmpeg.deleteFile(plan.outputVirtualName).catch(() => undefined);
+        if (hasTwoPass) {
+          await ffmpeg.deleteFile('ffmpeg2pass-0.log').catch(() => undefined);
+          await ffmpeg.deleteFile('ffmpeg2pass-0.log.mbtree').catch(() => undefined);
+        }
         await cleanup();
         this.emitStatus('ready');
       }
     }
   }
 
-  /**
-   * 実行中の FFmpeg Worker を強制終了し、メモリを即解放する。
-   */
   cancelActiveJob(): void {
     this.cancelled = true;
     this.activeLogListener = null;
@@ -284,7 +316,7 @@ class FFmpegClient {
       try {
         this.ffmpeg.terminate();
       } catch {
-        // Ignore termination errors
+        // Ignore
       }
     }
     this.ffmpeg = null;

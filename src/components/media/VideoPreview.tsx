@@ -8,17 +8,20 @@ import { clamp, formatTimecode } from '../../utils/formatters';
 
 export function VideoPreview() {
   const { lang } = useUiStore();
-  const { source, clips, config, updateConfig, updateTrimRange } = useProjectStore();
+  const { source, sources, clips, selectedClipId, config, updateConfig, updateTrimRange } =
+    useProjectStore();
   const { latestResult } = useJobStore();
   const {
     currentTime,
     isPlaying,
     previewMode,
     seekRequestSec,
+    command,
     setCurrentTime,
     setIsPlaying,
     setPreviewMode,
     clearSeekRequest,
+    clearCommand,
   } = usePlaybackStore();
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -26,32 +29,63 @@ export function VideoPreview() {
 
   const t = (key: Parameters<typeof translate>[1]) => translate(lang, key);
 
-  const primaryClip = clips[0];
-  const fps = source?.metadata.fps || 30;
+  const activeClip = clips.find((c) => c.id === selectedClipId) ?? clips[0];
+  const activeSource =
+    (activeClip ? sources.find((s) => s.id === activeClip.sourceId) : null) ?? source;
+
+  const fps = activeSource?.metadata.fps || 30;
   const frameStep = 1 / clamp(fps, 10, 120);
 
-  // Sync external seek requests (e.g. from Timeline)
+  // Sync external seek requests (from Timeline)
   useEffect(() => {
     if (seekRequestSec === null) return;
-    const mediaEl = source?.metadata.isAudioOnly ? audioRef.current : videoRef.current;
+    const mediaEl = activeSource?.metadata.isAudioOnly ? audioRef.current : videoRef.current;
     if (mediaEl && Number.isFinite(seekRequestSec)) {
       mediaEl.currentTime = seekRequestSec;
     }
     clearSeekRequest();
-  }, [seekRequestSec, source?.metadata.isAudioOnly, clearSeekRequest]);
+  }, [seekRequestSec, activeSource?.metadata.isAudioOnly, clearSeekRequest]);
+
+  // Sync keyboard playback commands (Space, J/K/L, ArrowLeft/ArrowRight)
+  useEffect(() => {
+    if (!command || !activeSource) return;
+    const mediaEl = activeSource.metadata.isAudioOnly ? audioRef.current : videoRef.current;
+    if (mediaEl) {
+      const maxDur = Math.max(0, activeSource.metadata.durationSec);
+      if (command.type === 'toggle') {
+        if (mediaEl.paused) {
+          mediaEl.play().catch(() => undefined);
+        } else {
+          mediaEl.pause();
+        }
+      } else if (command.type === 'pause') {
+        mediaEl.pause();
+      } else if (command.type === 'seekDelta') {
+        const next = clamp(mediaEl.currentTime + (command.value ?? 0), 0, maxDur);
+        mediaEl.currentTime = next;
+        setCurrentTime(next);
+      } else if (command.type === 'stepFrame') {
+        mediaEl.pause();
+        const next = clamp(mediaEl.currentTime + (command.value ?? 1) * frameStep, 0, maxDur);
+        mediaEl.currentTime = next;
+        setCurrentTime(next);
+      }
+    }
+    clearCommand();
+  }, [command, activeSource, frameStep, setCurrentTime, clearCommand]);
 
   // Sync preview playback speed
   useEffect(() => {
-    const mediaEl = source?.metadata.isAudioOnly ? audioRef.current : videoRef.current;
+    const mediaEl = activeSource?.metadata.isAudioOnly ? audioRef.current : videoRef.current;
     if (mediaEl) {
       mediaEl.playbackRate = clamp(config.speed, 0.25, 4);
     }
-  }, [config.speed, source?.metadata.isAudioOnly]);
+  }, [config.speed, activeSource?.metadata.isAudioOnly]);
 
-  if (!source) return null;
+  if (!activeSource) return null;
 
   const togglePlay = () => {
-    const mediaEl = source.metadata.isAudioOnly ? audioRef.current : videoRef.current;
+    const mediaEl = activeSource.metadata.isAudioOnly ? audioRef.current : videoRef.current;
     if (!mediaEl) return;
     if (mediaEl.paused) {
       mediaEl.play().catch(() => undefined);
@@ -61,19 +95,18 @@ export function VideoPreview() {
   };
 
   const stepFrame = (direction: -1 | 1) => {
-    const mediaEl = source.metadata.isAudioOnly ? audioRef.current : videoRef.current;
+    const mediaEl = activeSource.metadata.isAudioOnly ? audioRef.current : videoRef.current;
     if (!mediaEl) return;
     mediaEl.pause();
     const next = clamp(
       mediaEl.currentTime + direction * frameStep,
       0,
-      Math.max(0, source.metadata.durationSec)
+      Math.max(0, activeSource.metadata.durationSec)
     );
     mediaEl.currentTime = next;
     setCurrentTime(next);
   };
 
-  // Visual preview transform reflecting user's rotation / flip settings immediately
   const transformParts: string[] = [];
   if (config.rotation !== 0) transformParts.push(`rotate(${config.rotation}deg)`);
   if (config.flipHorizontal) transformParts.push('scaleX(-1)');
@@ -120,7 +153,7 @@ export function VideoPreview() {
         </div>
 
         <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-          {formatTimecode(currentTime)} / {formatTimecode(source.metadata.durationSec)}
+          {formatTimecode(currentTime)} / {formatTimecode(activeSource.metadata.durationSec)}
         </span>
       </div>
 
@@ -130,10 +163,10 @@ export function VideoPreview() {
           <div className="compare-grid">
             <div className="compare-pane">
               <span className="pill">{t('preview.original')}</span>
-              {source.metadata.isAudioOnly ? (
-                <audio src={source.objectUrl} controls style={{ width: '100%' }} />
+              {activeSource.metadata.isAudioOnly ? (
+                <audio src={activeSource.objectUrl} controls style={{ width: '100%' }} />
               ) : (
-                <video src={source.objectUrl} controls playsInline />
+                <video src={activeSource.objectUrl} controls playsInline />
               )}
             </div>
             <div className="compare-pane">
@@ -161,11 +194,12 @@ export function VideoPreview() {
           ) : (
             <video src={latestResult.objectUrl} controls playsInline className="preview-video" />
           )
-        ) : source.metadata.isAudioOnly ? (
+        ) : activeSource.metadata.isAudioOnly ? (
           <div style={{ padding: 24, width: '100%' }}>
             <audio
               ref={audioRef}
-              src={source.objectUrl}
+              key={activeSource.id}
+              src={activeSource.objectUrl}
               controls
               style={{ width: '100%' }}
               onPlay={() => setIsPlaying(true)}
@@ -173,7 +207,7 @@ export function VideoPreview() {
               onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
             />
           </div>
-        ) : !source.metadata.canBrowserPlay ? (
+        ) : !activeSource.metadata.canBrowserPlay ? (
           <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-secondary)', maxWidth: 420 }}>
             <p style={{ margin: 0, fontSize: '0.88rem' }}>{t('preview.noVideoPreview')}</p>
           </div>
@@ -181,7 +215,8 @@ export function VideoPreview() {
           <div style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%' }}>
             <video
               ref={videoRef}
-              src={source.objectUrl}
+              key={activeSource.id}
+              src={activeSource.objectUrl}
               playsInline
               controls
               className="preview-video"
@@ -210,19 +245,19 @@ export function VideoPreview() {
       </div>
 
       {/* Transport & Quick Frame Controls */}
-      {effectivePreviewMode === 'original' && source.metadata.canBrowserPlay && (
+      {effectivePreviewMode === 'original' && activeSource.metadata.canBrowserPlay && (
         <div className="preview-transport">
           <div className="transport-group">
             <button type="button" className="btn btn-sm" onClick={togglePlay}>
               {isPlaying ? t('preview.pause') : t('preview.play')}
             </button>
-            {!source.metadata.isAudioOnly && (
+            {!activeSource.metadata.isAudioOnly && (
               <>
                 <button
                   type="button"
                   className="btn btn-sm mono"
                   onClick={() => stepFrame(-1)}
-                  title={t('preview.prevFrame')}
+                  title={`${t('preview.prevFrame')} (←)`}
                 >
                   -1f
                 </button>
@@ -230,7 +265,7 @@ export function VideoPreview() {
                   type="button"
                   className="btn btn-sm mono"
                   onClick={() => stepFrame(1)}
-                  title={t('preview.nextFrame')}
+                  title={`${t('preview.nextFrame')} (→)`}
                 >
                   +1f
                 </button>
@@ -239,14 +274,19 @@ export function VideoPreview() {
           </div>
 
           <div className="transport-group">
-            {primaryClip && (
+            {activeClip && (
               <>
                 <button
                   type="button"
                   className="btn btn-sm"
+                  title={`${t('preview.setStart')} (I)`}
                   onClick={() => {
                     updateConfig({ trimEnabled: true });
-                    updateTrimRange(currentTime, Math.max(currentTime + 0.2, primaryClip.endSec));
+                    updateTrimRange(
+                      currentTime,
+                      Math.max(currentTime + 0.2, activeClip.endSec),
+                      activeClip.id
+                    );
                   }}
                 >
                   {t('preview.setStart')}
@@ -254,16 +294,21 @@ export function VideoPreview() {
                 <button
                   type="button"
                   className="btn btn-sm"
+                  title={`${t('preview.setEnd')} (O)`}
                   onClick={() => {
                     updateConfig({ trimEnabled: true });
-                    updateTrimRange(Math.min(primaryClip.startSec, Math.max(0, currentTime - 0.2)), currentTime);
+                    updateTrimRange(
+                      Math.min(activeClip.startSec, Math.max(0, currentTime - 0.2)),
+                      currentTime,
+                      activeClip.id
+                    );
                   }}
                 >
                   {t('preview.setEnd')}
                 </button>
               </>
             )}
-            {!source.metadata.isAudioOnly && (
+            {!activeSource.metadata.isAudioOnly && (
               <button
                 type="button"
                 className="btn btn-sm"

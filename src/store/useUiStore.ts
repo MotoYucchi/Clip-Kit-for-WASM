@@ -12,6 +12,8 @@ export type ControlTab =
   | 'speed'
   | 'transform'
   | 'audio'
+  | 'multitrack'
+  | 'compat'
   | 'snapshot';
 
 const THEME_KEY = 'clipkit_theme';
@@ -34,6 +36,7 @@ interface UiState {
   uiMode: UiMode;
   activeTab: ControlTab;
   mobileSheetOpen: boolean;
+  shortcutsOpen: boolean;
   toastMessage: string | null;
 
   setLang: (lang: Language) => void;
@@ -41,6 +44,7 @@ interface UiState {
   setUiMode: (mode: UiMode) => void;
   setActiveTab: (tab: ControlTab) => void;
   setMobileSheetOpen: (open: boolean) => void;
+  setShortcutsOpen: (open: boolean) => void;
   showToast: (message: string) => void;
   refreshDevice: () => void;
 }
@@ -60,6 +64,7 @@ export const useUiStore = create<UiState>((set) => ({
   uiMode: initialDevice.tier === 'mobile' ? 'simple' : 'advanced',
   activeTab: 'output',
   mobileSheetOpen: false,
+  shortcutsOpen: false,
   toastMessage: null,
 
   setLang: (lang) => {
@@ -82,6 +87,7 @@ export const useUiStore = create<UiState>((set) => ({
   setUiMode: (uiMode) => set({ uiMode }),
   setActiveTab: (activeTab) => set({ activeTab }),
   setMobileSheetOpen: (mobileSheetOpen) => set({ mobileSheetOpen }),
+  setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
 
   showToast: (toastMessage) => {
     if (typeof window !== 'undefined' && toastTimer !== null) {

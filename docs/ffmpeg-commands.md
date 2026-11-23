@@ -84,3 +84,48 @@ ffmpeg -i input.mkv -vn -map 0:a:1 -c:a flac -map_metadata -1 -y extracted.flac
 ffmpeg -ss 12.500 -i input.mp4 -frames:v 1 -map_metadata -1 -y snapshot.png
 ffmpeg -ss 12.500 -i input.mp4 -frames:v 1 -q:v 2 -map_metadata -1 -y snapshot.jpg
 ```
+
+---
+
+## Phase 2 追加コマンド一覧
+
+## 10. 複数クリップ・複数ファイル連結（解像度・FPS・音声自動正規化）
+```bash
+ffmpeg -i clip1.mp4 -i clip2.mov \
+  -filter_complex "[0:v]trim=start=2.000:end=12.000,setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,fps=30[cv0];[0:a]atrim=start=2.000:end=12.000,asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[ca0];[1:v]trim=start=0.000:end=10.000,setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x000000,setsar=1,fps=30[cv1];[1:a]atrim=start=0.000:end=10.000,asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[ca1];[cv0][ca0][cv1][ca1]concat=n=2:v=1:a=1[vcat][acat]" \
+  -map "[vcat]" -map "[acat]" -c:v libx264 -crf 23 -c:a aac -b:a 128k -y output.mp4
+```
+
+## 11. 多トラック音声（BGM / マイク録音ミックス + フェード・ループ・オフセット・loudnorm）
+```bash
+ffmpeg -i video.mp4 -i bgm.mp3 \
+  -filter_complex "[0:a]aresample=48000,aformat=channel_layouts=stereo,volume=0.80[orig_a];[1:a]atrim=start=0.000:end=30.000,asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,aloop=loop=-1:size=2000000000,atrim=0:57.500,asetpts=PTS-STARTPTS,afade=t=in:st=0:d=1.50,afade=t=out:st=55.50:d=2.00,volume=0.50,adelay=2500|2500[bgm_0];[orig_a][bgm_0]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=11[aout]" \
+  -map 0:v:0 -map "[aout]" -c:v libx264 -crf 23 -c:a aac -b:a 128k -y output.mp4
+```
+
+## 12. 多音声トラックとして個別保持（MP4 / MKV）
+```bash
+ffmpeg -i video.mp4 -i narration.webm \
+  -filter_complex "[0:a]aresample=48000,aformat=channel_layouts=stereo[orig_a];[1:a]atrim=start=0.000:end=15.000,asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[bgm_0]" \
+  -map 0:v:0 -map "[orig_a]" -map "[bgm_0]" \
+  -metadata:s:a:0 "title=Original Audio" -metadata:s:a:1 "title=Narration" \
+  -c:v libx264 -c:a aac -b:a 128k -y output.mkv
+```
+
+## 13. 目標ファイルサイズ指定（2パス・例: Discord 10MB 制限）
+```bash
+# Pass 1
+ffmpeg -i input.mp4 -map 0:v:0 -c:v libx264 -preset veryfast -pix_fmt yuv420p -b:v 1150k -maxrate 1438k -bufsize 2300k -pass 1 -passlogfile ffmpeg2pass -an -f null -
+
+# Pass 2
+ffmpeg -i input.mp4 -map 0:v:0 -map 0:a:0? -c:v libx264 -preset veryfast -pix_fmt yuv420p -b:v 1150k -maxrate 1438k -bufsize 2300k -pass 2 -passlogfile ffmpeg2pass -c:a aac -b:a 96k -movflags +faststart -map_metadata -1 -y output.mp4
+```
+
+## 14. VFR → CFR 変換 & HDR → SDR トーンマッピング
+```bash
+ffmpeg -i iphone_hdr.mov \
+  -map 0:v:0 -map 0:a:0? \
+  -vf "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,fps=30" \
+  -vsync cfr -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
+  -c:a aac -b:a 128k -movflags +faststart -y output.mp4
+```
